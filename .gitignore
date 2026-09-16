@@ -3,3 +3,4 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 output/*.log
+output/closure_table_*.npz

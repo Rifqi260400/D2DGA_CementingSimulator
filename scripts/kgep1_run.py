@@ -71,10 +71,12 @@ def make_table(sc, geo, n_c, n_h, cache_dir="output"):
                        umag_grid=np.array([0.02, 0.25, 0.5, 1.0, 2.0, 4.0]),
                        gb_grid=np.array([sc.buoyancy_number]),
                        n_y=200, tol=1e-9)
-    if os.path.exists(path) and hasattr(tab, "load"):
+    if os.path.exists(path):
+        print(f"reusing cached closure table {path}", flush=True)
         return tab.load(path), path, 0.0
     t0 = time.time()
     tab.build(verbose=True)
+    tab.save(path)
     return tab, path, time.time() - t0
 
 

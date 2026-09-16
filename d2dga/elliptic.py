@@ -242,12 +242,23 @@ class TabulatedClosures(ClosureProvider):
         self.table = table
         self.gb = float(gb)
 
-    def script_I1_I2(self, c, H, umag):
-        I1, I2, _, _ = self.table(c, H=H, umag=umag, gb=self.gb)
+    @staticmethod
+    def _umag(umag, c):
+        """The first elliptic solve of a Picard sequence has no velocity yet
+        and passes None.  NewtonianClosures ignores it and TwoDGAClosures
+        substitutes 1; a tabulated table must do the same, or np.asarray(None)
+        puts NaN on the interpolation axis and the elliptic matrix comes back
+        exactly singular."""
+        if umag is None:
+            return np.ones_like(np.asarray(c, dtype=float))
+        return umag
+
+    def script_I1_I2(self, c, H, umag=None):
+        I1, I2, _, _ = self.table(c, H=H, umag=self._umag(umag, c), gb=self.gb)
         return I1, I2
 
-    def q0_I3(self, c, H, umag):
-        _, _, q0, I3 = self.table(c, H=H, umag=umag, gb=self.gb)
+    def q0_I3(self, c, H, umag=None):
+        _, _, q0, I3 = self.table(c, H=H, umag=self._umag(umag, c), gb=self.gb)
         return q0, I3
 
     def wavespeed_nodes(self):
@@ -255,7 +266,7 @@ class TabulatedClosures(ClosureProvider):
         its derivative is piecewise constant and the endpoints of each segment
         bound it -- probing the nodes therefore makes the interval maximum
         exact for the interpolated closure that the solver actually uses."""
-        return np.asarray(self.table.c_values, dtype=float)[1:-1]
+        return np.asarray(self.table.c_grid, dtype=float)[1:-1]
 
 
 # ===========================================================================

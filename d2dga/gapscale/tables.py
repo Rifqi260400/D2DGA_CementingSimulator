@@ -166,6 +166,44 @@ class ClosureTable:
             self.n_failed += 1
         return closures_from_solution(sol)
 
+    # -- persistence ----------------------------------------------------------
+    def save(self, path):
+        """Cache a built table.  Building is the expensive part of a
+        Herschel-Bulkley run -- thousands of augmented-Lagrangian solves -- and
+        the result depends only on the two fluids and the axes, so it is worth
+        keeping between runs."""
+        if not self._values:
+            raise RuntimeError("build() first")
+        np.savez_compressed(
+            path, tuned_r=self.tuned_r, n_failed=self.n_failed,
+            **{f"axis_{n}": a for n, a in self._axes},
+            **{f"val_{k}": v for k, v in self._values.items()})
+        return path
+
+    def load(self, path):
+        """Restore a cached table.  The axes are checked against this object's
+        own, so a stale cache is a loud failure rather than a silent wrong
+        answer."""
+        z = np.load(path)
+        axes = self._axis_list()
+        for name, axis in axes:
+            cached = z[f"axis_{name}"]
+            if cached.shape != axis.shape or not np.allclose(cached, axis):
+                raise ValueError(
+                    f"cached table at {path} has a different '{name}' axis; "
+                    f"delete it or change the cache key")
+        self._axes = axes
+        self._values = {k: z[f"val_{k}"] for k in ("I1", "I2", "q0", "I3")}
+        self.tuned_r = float(z["tuned_r"])
+        self.n_failed = int(z["n_failed"])
+        pts = tuple(a for _, a in self._axes)
+        self._interp = {
+            k: RegularGridInterpolator(pts, v, method="linear",
+                                       bounds_error=False, fill_value=None)
+            for k, v in self._values.items()
+        }
+        return self
+
     # -- evaluate -------------------------------------------------------------
     def __call__(self, c, H=1.0, umag=1.0, gb=0.0, warn_out_of_range=True):
         """Interpolate all four closures.  Broadcasting over array inputs."""
