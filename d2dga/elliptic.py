@@ -41,6 +41,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .gapscale import newtonian as _newt
+from .gapscale import twodga as _twodga
 from .geometry import Geometry
 
 
@@ -81,6 +82,51 @@ class NewtonianClosures(ClosureProvider):
     @property
     def is_linear(self):
         return True
+
+
+class TwoDGAClosures(ClosureProvider):
+    """
+    The ORIGINAL B02/PF04 closure, for the 2DGA baseline.
+
+    Two uses: reproducing PF04's analytic steady states (M4-T2, M4-T3), and
+    giving the thesis the 2DGA-vs-D2DGA comparison that ZF22/ZF23 run
+    throughout -- without it there is no baseline to improve on.
+
+    Expressed through the same script_I1 interface as D2DGA via the effective
+    mobility in `twodga.effective_script_I1`, so one elliptic assembly serves
+    both models.  The ONLY other difference is the buoyancy: 2DGA has no
+    layering term, so script_I2 = 0 identically.  That single change is what
+    separates the two models' b vectors, which makes the comparison clean.
+
+    Rheological parameters are mixed LINEARLY in concentration, as B02
+    Section 2.2.1 does -- B02 notes the mixture laws are "used for simplicity,
+    with no particular physical justification".
+    """
+
+    def __init__(self, fluid1, fluid2):
+        self.f1, self.f2 = fluid1, fluid2
+
+    def _mix(self, c):
+        c = np.asarray(c, dtype=float)
+        kappa = (1 - c) * self.f1.consistency + c * self.f2.consistency
+        n = (1 - c) * self.f1.power_law_index + c * self.f2.power_law_index
+        tau_y = (1 - c) * self.f1.yield_stress + c * self.f2.yield_stress
+        return kappa, n, tau_y
+
+    def script_I1_I2(self, c, H, umag):
+        if umag is None:
+            umag = np.ones_like(np.asarray(c, dtype=float))
+        kappa, n, tau_y = self._mix(c)
+        grad = 2.0 * np.asarray(H, dtype=float) * np.asarray(umag, dtype=float)
+        I1 = _twodga.effective_script_I1(grad, H, kappa, n, tau_y)
+        return I1, np.zeros_like(I1)
+
+    def q0_I3(self, c, H, umag):
+        """2DGA advects with the gap-averaged velocity and has no buoyancy
+        flux: q0 = c and I3 = 0.  That is precisely the simplification D2DGA
+        exists to remove (BF25 Section 2.1)."""
+        c = np.asarray(c, dtype=float)
+        return c, np.zeros_like(c)
 
 
 class TabulatedClosures(ClosureProvider):
