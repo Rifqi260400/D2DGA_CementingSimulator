@@ -83,9 +83,10 @@ def main():
         th = r["t_br"]
         print(f"case {case.case:2d}  e={case.e}  m={case.m:<4} b_ZF22={case.b:<6} "
               f"b_BF25={r['b']:8.1f}  {r['steps']:6d} steps  {r['wall']:6.0f}s")
+        sh = "--" if r["shock"] is None else f"{1 / r['shock'][2]:.3f}"
         print(f"      t_br  0.01/{th[0.01]:.3f}  0.1/{th[0.1]:.3f}  "
               f"0.5/{th[0.5]:.3f}   ZF22 {case.t_br_d2dga}  "
-              f"(1-D shock {np.nan if r['shock'] is None else 1/r['shock'][2]:.3f})")
+              f"(1-D: lead {1 / r['lead']:.3f}, main shock {sh})")
         print(f"      eta_E {r['eta']:.3f}   ZF22 {case.eta_e_d2dga}   "
               f"cons {r['cons']:.1e}   c in [{r['c_min']:.3f}, {r['c_max']:.3f}]")
 
@@ -98,10 +99,13 @@ def main():
         "module docstring and assumptions.md NUM-21 for why one number is not",
         "enough. `1-D shock` is the arrival time of the main shock of BF25",
         "(3.7)'s planar reduction, which isolates the gap-scale closures from",
-        "the 2-D solve.",
+        "the 2-D solve. BOTH the leading wave and the main shock are quoted:",
+        "for an adverse density difference (case 1) the largest shock travels",
+        "BACKWARDS, so its arrival time says nothing about breakthrough and only",
+        "the leading wave does.",
         "",
-        "| case | e | m | b (ZF22) | b (BF25) | t_br @0.01 | @0.1 | @0.5 | ZF22 t_br | 1-D shock | eta_E | ZF22 eta_E |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| case | e | m | b (ZF22) | b (BF25) | t_br @0.01 | @0.1 | @0.5 | ZF22 t_br | 1-D lead | 1-D main shock | eta_E | ZF22 eta_E |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         c = r["case"]
@@ -110,7 +114,7 @@ def main():
         lines.append(
             f"| {c.case} | {c.e} | {c.m} | {c.b} | {r['b']:.1f} | "
             f"{th[0.01]:.3f} | {th[0.1]:.3f} | {th[0.5]:.3f} | {c.t_br_d2dga} | "
-            f"{sh} | {r['eta']:.3f} | {c.eta_e_d2dga} |")
+            f"{1 / r['lead']:.3f} | {sh} | {r['eta']:.3f} | {c.eta_e_d2dga} |")
     lines += ["", "Volume conservation (max relative drift over the run):", ""]
     for r in rows:
         lines.append(f"* case {r['case'].case}: {r['cons']:.2e}")
