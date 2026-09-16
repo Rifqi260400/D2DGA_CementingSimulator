@@ -22,35 +22,59 @@ BF25 (2.27) as printed reads
 
     I3 = c^2 (1-c)^3 [ 4 m c + 3 (1 - c^2) ] / ( 12 [ m c^3 + 1 - c^3 ] )
 
-This does not follow from BF25's own definition (2.23), and it is wrong twice
-over.  Two independent derivations agree on the correct form:
+This does not follow from BF25's own definition (2.23), and it is wrong three
+times over -- in the numerator, in the denominator, and in the SIGN.
+Integrating (2.23) with eta1 = m^(1/2), eta2 = m^(-1/2) gives, exactly,
 
-  Route A -- integrate BF25 (2.23) directly with eta1 = m^(1/2), eta2 = m^(-1/2).
-  Route B -- BF25 Section 3.2 states its own translation to Lajeunesse et al.:
-             "b = 3 m^(1/2)/U and m = M".  With BF25 (3.7) reading
-             dc/dt + d/dxi[q0 + b I3] = 0 and Lajeunesse's flux second term
-             c^2(1-c)^3[(4m-3)c + 3] / (4U[1 + (m-1)c^3]), this fixes I3.
+    I3 = - c^2 (1-c)^3 [ 4 m c + 3 (1 - c) ]
+           / ( 12 m^(1/2) [ m c^3 + 1 - c^3 ] )                  <-- MASTER
 
-Both give
+Differences from the printed (2.27): the numerator is 3(1-c), not 3(1-c^2);
+the denominator carries an m^(1/2) that is missing in print (and (2.24), (2.25)
+DO carry their m^(+/-1/2), so the omission is inconsistent with the paper's own
+neighbouring equations); and the whole thing is negative.  The derivation is
+asserted symbolically, for general m and c, in tests/test_m2_closures.py.
 
-    I3 = c^2 (1-c)^3 [ 4 m c + 3 (1 - c) ]
-         / ( 12 m^(1/2) [ m c^3 + 1 - c^3 ] )                      <-- MASTER
 
-Differences from the printed (2.27): the numerator is 3(1-c), not 3(1-c^2),
-and the denominator carries an m^(1/2) that is missing in print.  Note that
-(2.24) and (2.25) do carry their m^(+/-1/2), so the omission in (2.27) is
-inconsistent with the paper's own neighbouring equations.
+The sign is not cosmetic -- it is the model's central physical statement
+-------------------------------------------------------------------------
+I3 enters the transport flux as `q0 + b I3` (BF25 2.21, 3.7), so with I3 < 0 a
+FAVOURABLE density difference (b > 0, heavy fluid displacing upwards) subtracts
+from the dispersive flux, and a large enough b drives the flux function below
+the chord from (0,0) to (1,1).  For the Riemann problem c = 1 below, c = 0
+above, that turns the front from a spreading fan into a single shock travelling
+at exactly the mean speed.  Three independent confirmations that this, and not
+the opposite sign, is BF25's:
 
-Conversions to the other papers (the M2-T3 deliverable):
+  1. (2.23) integrated symbolically.  Exact, for all m and c -- and (2.14) and
+     (2.15) integrate to the printed (2.24) and (2.25) in the same computation,
+     so the layer convention and the algebra are pinned by the same check.
+  2. BF25 Section 3.2 in words: "the shock velocity approaches the mean
+     velocity (w_f -> 1), and the front becomes more stable when b >> 1 ...
+     There is less dispersion for larger b."  With the opposite sign, larger b
+     would give a flux hump many times the mean flux and a violent
+     counter-current exchange -- the exact opposite.
+  3. ZF22 Table 3 case 1, the one case with b < 0 (rho_2 < rho_1): it has by
+     far the worst displacement of the ten (t_br = 0.44, eta_E = 0.66).  With
+     I3 < 0 a negative b flips the sign of the buoyancy flux and produces
+     exactly that instability.
 
-    BCF25 (23) form  =  MASTER * m^(1/2)
-    ZF22  (4.26)     =  MASTER * 6 / m^(1/2)
+BF25 Section 3.2 also states "the effect of the buoyancy number and the
+viscosity ratio on q0'(c) + b I3'(c) is negligible at c = 0, and it maintains a
+constant value of 1.5".  MASTER satisfies this identically -- I3 ~ c^2 near
+zero, so I3'(0) = 0 for every b and m -- which is a check on the numerator's
+leading power rather than on the sign.
 
-Sign.  MASTER is POSITIVE on 0 < c < 1.  It enters the flux as `+ b I3`
-(BF25 3.7) with b > 0 for the favourable case, whereas ZF22 writes the same
-physics as `+ (Delta_rho H^3 / 6 eta2) I3` with Delta_rho < 0 in that case.
-The two sign conventions cancel; the physics -- positive buoyancy suppresses
-forward dispersion -- is the same.
+Conversions to the other papers.  The other papers print the MAGNITUDE with
+their own sign conventions; these helpers reproduce what each paper prints, so
+the relation to MASTER carries the minus:
+
+    BCF25 (23) form  =  -MASTER * m^(1/2)
+    ZF22  (4.26)     =  -MASTER * 6 / m^(1/2)
+
+ZF22 writes the same physics as `+ (Delta_rho H^3 / 6 eta2) I3` with
+Delta_rho < 0 in the favourable case, so the two sign conventions cancel and
+the physics -- favourable buoyancy suppresses forward dispersion -- agrees.
 """
 
 from __future__ import annotations
@@ -88,10 +112,16 @@ def q0(c, m):
 
 
 def script_I3(c, m):
-    """Buoyant flux distribution -- MASTER form, see module docstring."""
+    """
+    Buoyant flux distribution -- MASTER form, see module docstring.
+
+    NEGATIVE on 0 < c < 1, with I3(0) = I3(1) = 0.  The sign is BF25 (2.23)'s
+    and is what makes favourable buoyancy suppress dispersion rather than
+    drive a counter-current exchange.
+    """
     c = np.asarray(c, dtype=float)
-    return (c ** 2 * (1.0 - c) ** 3 * (4.0 * m * c + 3.0 * (1.0 - c))
-            / (12.0 * np.sqrt(m) * _denominator(c, m)))
+    return -(c ** 2 * (1.0 - c) ** 3 * (4.0 * m * c + 3.0 * (1.0 - c))
+             / (12.0 * np.sqrt(m) * _denominator(c, m)))
 
 
 # -- derivatives, needed for LLF wavespeeds (BCF25 32-35) and for the
@@ -128,20 +158,21 @@ def dscript_I3_dc(c, m):
     dP = (2.0 * c * (1.0 - c) ** 3 * lin
           - 3.0 * c ** 2 * (1.0 - c) ** 2 * lin
           + c ** 2 * (1.0 - c) ** 3 * (4.0 * m - 3.0))
-    return (dP * D - P * dD) / (12.0 * np.sqrt(m) * D ** 2)
+    return -(dP * D - P * dD) / (12.0 * np.sqrt(m) * D ** 2)
 
 
 # -- other papers' forms, kept ONLY so the conversions can be tested -------
 def script_I3_bcf25_form(c, m):
-    """BCF25 (23) / the ZF22-family numerator with a 12 denominator.
-    Equals MASTER * sqrt(m).  Not used in the solver."""
+    """BCF25 (23) as printed.  Equals -MASTER * sqrt(m).  Not used in the
+    solver."""
     c = np.asarray(c, dtype=float)
     return (c ** 2 * (1.0 - c) ** 3 * (4.0 * m * c + 3.0 * (1.0 - c))
             / (12.0 * _denominator(c, m)))
 
 
 def script_I3_zf22_form(c, m):
-    """ZF22 (4.26).  Equals MASTER * 6 / sqrt(m).  Not used in the solver."""
+    """ZF22 (4.26) as printed.  Equals -MASTER * 6 / sqrt(m).  Not used in the
+    solver."""
     c = np.asarray(c, dtype=float)
     return (c ** 2 * (1.0 - c) ** 3 * (4.0 * m * c + 3.0 * (1.0 - c))
             / (2.0 * m * _denominator(c, m)))

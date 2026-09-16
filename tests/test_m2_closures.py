@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 import sympy as sp
 
+import tests.benchmarks.kinematic_wave as kw
+
 from d2dga.gapscale import newtonian as nwt
 from d2dga.gapscale.al_solver import TwoLayerGapSolver
 from d2dga.gapscale.closures import closures_from_solution, closures_newtonian_analytic
@@ -61,16 +63,21 @@ def test_m2_t1_analytic_forms_follow_from_the_integral_definitions():
     E = sp.integrate(y * (1 - y) / e1, (y, c, 1))
     I1, I2 = A + C, (1 - c) * A + c * E
     q0 = (A + c * Bq) / I1
-    I3 = (((1 - c) * A + c ** 2 * D) * I1 - (A + c * Bq) * I2) / I1
+    I3 = ((A + c * Bq) * I2 - ((1 - c) * A + c ** 2 * D) * I1) / I1
 
     assert sp.simplify(I1 - (sp.sqrt(m) * c**3 + (1 - c**3) / sp.sqrt(m)) / 3) == 0
     assert sp.simplify(I2 - (2 * sp.sqrt(m) * c**3 * (1 - c)
                              + c * (1 - c)**2 * (1 + 2 * c) / sp.sqrt(m)) / 6) == 0
     assert sp.simplify(q0 - c * (m * c**2 + sp.Rational(3, 2) * (1 - c**2))
                        / (m * c**3 + (1 - c**3))) == 0
-    master = (c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c))
-              / (12 * sp.sqrt(m) * (m * c**3 + (1 - c**3))))
+    master = -(c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c))
+               / (12 * sp.sqrt(m) * (m * c**3 + (1 - c**3))))
     assert sp.simplify(I3 - master) == 0
+    # the same computation pins the layer convention: I1 and I2 above came out
+    # equal to the PRINTED (2.24) and (2.25), so the sign of I3 is not a free
+    # choice about which fluid sits at the wall -- it is fixed by the same
+    # integrals that reproduce the paper's own two neighbouring formulae.
+    assert master.subs({c: sp.Rational(1, 2), m: 1}) < 0
 
 
 # ---------------------------------------------------------------- M2-T2 ---
@@ -108,38 +115,85 @@ def test_m2_t3_cross_paper_reduction_and_conversion_factors():
     """
     THE cross-paper gate.  Settles CONV-03.
 
-    BF25 (2.27) AS PRINTED does not follow from BF25's own (2.23).  Two
-    independent derivations -- integrating (2.23), and BF25 Section 3.2's own
-    translation "b = 3 m^0.5 / U" onto Lajeunesse's flux -- agree on
+    BF25 (2.27) AS PRINTED does not follow from BF25's own (2.23).  Integrating
+    (2.23) with eta1 = m^0.5, eta2 = m^-0.5 gives
 
-        I3 = c^2 (1-c)^3 [4 m c + 3(1-c)] / (12 m^(1/2) [m c^3 + 1 - c^3])
+        I3 = - c^2 (1-c)^3 [4 m c + 3(1-c)] / (12 m^(1/2) [m c^3 + 1 - c^3])
 
-    differing from print in TWO places: 3(1-c) not 3(1-c^2), and an m^(1/2)
-    that is absent in (2.27) although (2.24)-(2.25) both carry their m^(+-1/2).
+    differing from print in THREE places: 3(1-c) not 3(1-c^2); an m^(1/2) that
+    is absent in (2.27) although (2.24)-(2.25) both carry their m^(+-1/2); and
+    the overall SIGN.  The first two are transcription slips.  The third is the
+    one that changes results -- see test_conv03_sign_is_what_makes_buoyancy
+    _stabilising and newtonian.py's module docstring.
 
-    Conversion factors, the deliverable this gate asks for:
-        BCF25 (23) form = MASTER * m^(1/2)
-        ZF22  (4.26)    = MASTER * 6 / m^(1/2)
+    Conversion factors, the deliverable this gate asks for.  The other papers
+    print the same magnitude under their own sign conventions, so the factors
+    carry the minus:
+        BCF25 (23) form = -MASTER * m^(1/2)
+        ZF22  (4.26)    = -MASTER * 6 / m^(1/2)
     """
     c, m = sp.symbols('c m', positive=True)
-    master = (c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c))
-              / (12 * sp.sqrt(m) * (m * c**3 + (1 - c**3))))
+    master = -(c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c))
+               / (12 * sp.sqrt(m) * (m * c**3 + (1 - c**3))))
     bcf25 = c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c)) / (12 * (m * c**3 + (1 - c**3)))
     zf22 = c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c)) / (2 * m * (m * c**3 + (1 - c**3)))
     printed = (c**2 * (1 - c)**3 * (4 * m * c + 3 * (1 - c**2))
                / (12 * (m * c**3 + (1 - c**3))))
 
-    assert sp.simplify(bcf25 / master - sp.sqrt(m)) == 0
-    assert sp.simplify(zf22 / master - 6 / sp.sqrt(m)) == 0
+    assert sp.simplify(bcf25 / master + sp.sqrt(m)) == 0
+    assert sp.simplify(zf22 / master + 6 / sp.sqrt(m)) == 0
     assert sp.simplify(printed - master) != 0          # the discrepancy is real
 
     # numeric confirmation through the module functions
     cc = np.linspace(0.05, 0.95, 19)
     for mm in (0.2, 1.0, 5.0):
         assert np.allclose(nwt.script_I3_bcf25_form(cc, mm),
-                           nwt.script_I3(cc, mm) * np.sqrt(mm), rtol=1e-12)
+                           -nwt.script_I3(cc, mm) * np.sqrt(mm), rtol=1e-12)
         assert np.allclose(nwt.script_I3_zf22_form(cc, mm),
-                           nwt.script_I3(cc, mm) * 6 / np.sqrt(mm), rtol=1e-12)
+                           -nwt.script_I3(cc, mm) * 6 / np.sqrt(mm), rtol=1e-12)
+
+
+def test_conv03_sign_is_what_makes_buoyancy_stabilising():
+    """
+    The sign of I3 is the model's central physical claim, so test the claim and
+    not just the algebra.
+
+    BF25 Section 3.2, verbatim: "the shock velocity approaches the mean velocity
+    (w_f -> 1), and the front becomes more stable when b >> 1 ... There is less
+    dispersion for larger b", and "buoyancy completely suppresses the spike
+    regime as b increases from 100 to 1000".
+
+    The object those sentences describe is the SHOCK, not the tip.  The tip
+    speed is 1.5 for every b (BF25 says so in the same paragraph: q0'(0) = 1.5
+    and I3'(0) = 0), so it cannot be what "approaches the mean velocity".  The
+    shock comes out of the upper concave envelope of f(c) = q0 + b I3 on [0, 1]
+    -- see tests/benchmarks/kinematic_wave.py -- and its speed is the envelope
+    segment's slope, BF25 (3.9).
+    """
+    for m in (0.2, 1.0, 5.0):
+        speeds, spikes = [], []
+        for b in (10.0, 100.0, 1000.0):
+            shock = kw.riemann_structure(m, b)["main_shock"]
+            assert shock is not None, (m, b)
+            speeds.append(shock[2])
+            spikes.append(shock[0])        # the spike occupies 0 < c < c_lo
+        assert speeds == sorted(speeds, reverse=True), (m, speeds)
+        assert abs(speeds[-1] - 1.0) < 0.05, (m, speeds)        # -> mean speed
+        assert spikes == sorted(spikes, reverse=True), (m, spikes)
+        assert spikes[-1] < 0.1 * spikes[0], (m, spikes)        # suppressed
+
+        # reversing the sign turns the same statement inside out: the flux
+        # grows a hump many times the mean flux and the leading wave runs away
+        assert kw.riemann_structure(m, -1000.0)["leading_speed"] > 20.0
+
+    # BF25 Section 3.2 again: "the effect of the buoyancy number and the
+    # viscosity ratio on q0' + b I3' is negligible at c = 0, and it maintains a
+    # constant value of 1.5".  I3 ~ c^2 near zero, so this is exact.
+    for m in (0.2, 1.0, 5.0):
+        for b in (0.0, 100.0, 1000.0):
+            speed = (nwt.dq0_dc(np.array(0.0), m)
+                     + b * nwt.dscript_I3_dc(np.array(0.0), m))
+            assert abs(float(speed) - 1.5) < 1e-12
 
 
 @pytest.mark.parametrize("m", [0.2, 1.0, 5.0])
@@ -182,6 +236,7 @@ def test_m2_t4_analytic_q0_endpoints_are_exact():
         assert nwt.script_I2(1.0, m) == 0.0
         assert nwt.script_I3(0.0, m) == 0.0
         assert nwt.script_I3(1.0, m) == 0.0
+        assert np.all(nwt.script_I3(np.linspace(0.05, 0.95, 19), m) < 0.0)
 
 
 # ---------------------------------------------------------------- M2-T5 ---

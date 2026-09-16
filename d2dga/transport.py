@@ -63,6 +63,31 @@ DOWNSTREAM side.  (11)/(14) are the correct pair and are what is implemented.
 The check is in tests/test_m5_transport.py::test_num16_azimuthal_upwind_direction.
 
 
+NUM-26 (BCF25's wavespeeds are evaluated at the wrong places).  BCF25
+(32)-(35) set the LLF coefficients from the flux-function slopes AT THE TWO
+CELL VALUES on either side of a face.  That is not enough, and the shortfall is
+not academic: the coefficient then depends on the neighbour's own value, and
+where |dI3/dc| is falling it DECREASES as that neighbour's concentration rises.
+The monotonicity argument needs
+
+    d/dc_S [ alpha(c_S, c_C) (c_S - c_C) ] >= 0,
+
+and with an endpoint-only alpha the second term can overwhelm the first.
+Measured, at beta = pi/4, b = 20, e = 0.5: the discrete Jacobian entry for the
+upstream neighbour comes out at -0.070 and the concentration reaches -0.0089
+within two steps of a coupled run -- an O(10^-2) violation of the maximum
+principle, not roundoff.
+
+The remedy is the textbook LLF/Rusanov definition: alpha is the maximum of
+|f'| over the whole CLOSED INTERVAL between the two states.  Then alpha bounds
+the slope at both endpoints AND is non-decreasing as the interval widens, so
+(d alpha/d c_S)(c_S - c_C) >= 0 for either ordering of the two states and
+monotonicity is restored unconditionally.  The interval maximum is computed
+exactly rather than sampled: the closure provider supplies the interior
+extrema of both derivatives (`wavespeed_nodes`), which for the Newtonian pair
+are the two or three roots found once per m.
+
+
 Monotonicity
 ------------
 The scheme is monotone in the strict sense: c^{n+1}_P is a non-decreasing
@@ -114,7 +139,10 @@ class TransportSolver:
     def __init__(self, geometry: Geometry, closures: ClosureProvider,
                  buoyancy_number: float = 0.0,
                  inflow_concentration: float = 1.0,
-                 cfl: float = 0.5):
+                 cfl: float = 0.5,
+                 wavespeed: str = "interval"):
+        if wavespeed not in ("interval", "endpoints"):
+            raise ValueError("wavespeed must be 'interval' or 'endpoints'")
         if not 0.0 < cfl <= 1.0:
             raise ValueError("cfl must lie in (0, 1]")
         if not 0.0 <= inflow_concentration <= 1.0:
@@ -125,6 +153,10 @@ class TransportSolver:
         self.b = float(buoyancy_number)
         self.c_in = float(inflow_concentration)
         self.cfl = float(cfl)
+        # "endpoints" reproduces BCF25 (32)-(35) as printed.  It is NOT
+        # monotone -- see NUM-26 in the module docstring -- and is retained
+        # only so the failure can be demonstrated against the fix.
+        self.wavespeed = wavespeed
 
         g = geometry.grid
         self.n_phi, self.n_xi = g.n_phi, g.n_xi
@@ -143,6 +175,12 @@ class TransportSolver:
         self.k_xi = self.b * self.H_c ** 3 * self.ra_c * np.cos(beta)
 
         self.cell_area = self.dphi * self.dxi
+
+        # NUM-26: interior concentrations at which the flux-function slopes can
+        # peak.  Probed on top of the two endpoint values so that the LLF
+        # coefficient is the maximum over the whole interval between the states
+        # at a face, which is what makes the scheme monotone.
+        self._nodes = np.asarray(closures.wavespeed_nodes(), dtype=float)
 
     # ------------------------------------------------------------------
     # state at cell centres
@@ -166,6 +204,38 @@ class TransportSolver:
         left = np.full((a.shape[0], 1), inflow_value) if inflow_value is not None \
             else a[:, :1]
         return np.concatenate([left, a, a[:, -1:]], axis=1)
+
+    # ------------------------------------------------------------------
+    # LLF wavespeeds -- interval maxima, NOT endpoint values (NUM-26)
+    # ------------------------------------------------------------------
+    def _interval_max(self, cA, cB, dA, dB, HA, HB, umagA, umagB):
+        """
+        max |dq0/dc| and max |dI3/dc| over the closed interval [cA, cB].
+
+        The two endpoint values are given (they are already computed at the
+        cell centres); every node of `wavespeed_nodes` that falls inside the
+        interval is probed as well.  For the closed-form closures that node
+        list IS the set of interior extrema, so the result is the exact
+        interval maximum; the generic fallback samples uniformly and is a
+        bound.  Either way the value can only grow as the interval widens,
+        which is the property the monotonicity proof needs.
+        """
+        lo = np.minimum(cA, cB)
+        hi = np.maximum(cA, cB)
+        mq = np.maximum(np.abs(dA[0]), np.abs(dB[0]))
+        mi = np.maximum(np.abs(dA[1]), np.abs(dB[1]))
+        if self.wavespeed == "endpoints":
+            return mq, mi
+        for node in self._nodes:
+            inside = (lo <= node) & (node <= hi)
+            if not np.any(inside):
+                continue
+            nd = np.full(lo.shape, node)
+            for H, umag in ((HA, umagA), (HB, umagB)):
+                dq, dI = self.closures.dq0_dI3_dc(nd, H, umag)
+                mq = np.where(inside, np.maximum(mq, np.abs(dq)), mq)
+                mi = np.where(inside, np.maximum(mi, np.abs(dI)), mi)
+        return mq, mi
 
     # ------------------------------------------------------------------
     # face fluxes
@@ -200,10 +270,16 @@ class TransportSolver:
         buoy = 0.5 * self.dxi * (kphiP[:-1, :] * I3P[:-1, :]
                                  + kphiP[1:, :] * I3P[1:, :])
 
-        a_q = 0.5 * np.abs(dpsi_xi) * np.maximum(np.abs(dq0P[:-1, :]),
-                                                 np.abs(dq0P[1:, :]))
+        u_pad = None if umag is None else pad_phi(np.asarray(umag, dtype=float))
+        H_pad = pad_phi(self.H_c)
+        mq, mi = self._interval_max(
+            cL, cR, (dq0P[:-1, :], dI3P[:-1, :]), (dq0P[1:, :], dI3P[1:, :]),
+            H_pad[:-1, :], H_pad[1:, :],
+            None if u_pad is None else u_pad[:-1, :],
+            None if u_pad is None else u_pad[1:, :])
+        a_q = 0.5 * np.abs(dpsi_xi) * mq
         a_b = self.dxi * np.maximum(np.abs(kphiP[:-1, :]), np.abs(kphiP[1:, :])) \
-            * np.maximum(np.abs(dI3P[:-1, :]), np.abs(dI3P[1:, :]))
+            * mi
         a_phi = a_q + a_b
 
         Phi = adv + buoy - 0.5 * a_phi * (cR - cL)
@@ -242,10 +318,16 @@ class TransportSolver:
         buoy_x = 0.5 * self.dphi * (kxiX[:, :-1] * I3X[:, :-1]
                                     + kxiX[:, 1:] * I3X[:, 1:])
 
-        b_q = 0.5 * np.abs(dpsi_phi) * np.maximum(np.abs(dq0X[:, :-1]),
-                                                  np.abs(dq0X[:, 1:]))
+        u_x = None if umag is None else self._pad_xi(np.asarray(umag, float))
+        H_x = self._pad_xi(self.H_c)
+        mq_x, mi_x = self._interval_max(
+            cS, cN, (dq0X[:, :-1], dI3X[:, :-1]), (dq0X[:, 1:], dI3X[:, 1:]),
+            H_x[:, :-1], H_x[:, 1:],
+            None if u_x is None else u_x[:, :-1],
+            None if u_x is None else u_x[:, 1:])
+        b_q = 0.5 * np.abs(dpsi_phi) * mq_x
         b_b = self.dphi * np.maximum(np.abs(kxiX[:, :-1]), np.abs(kxiX[:, 1:])) \
-            * np.maximum(np.abs(dI3X[:, :-1]), np.abs(dI3X[:, 1:]))
+            * mi_x
         a_xi = b_q + b_b
 
         Xi = adv_x + buoy_x - 0.5 * a_xi * (cN - cS)

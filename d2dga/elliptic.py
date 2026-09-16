@@ -45,6 +45,30 @@ from .gapscale import twodga as _twodga
 from .geometry import Geometry
 
 
+def _extrema_of(*funcs, n_scan: int = 4001):
+    """
+    Interior local maxima of |f| for each f, refined to machine precision.
+
+    Used to make the LLF interval maximum EXACT for closed-form closures rather
+    than a sampled bound.  A coarse scan locates each peak's bracketing triple;
+    a bounded scalar minimisation of -f then refines it.
+    """
+    from scipy.optimize import minimize_scalar
+
+    grid = np.linspace(0.0, 1.0, n_scan)
+    out = []
+    for f in funcs:
+        v = np.asarray(f(grid), dtype=float)
+        peaks = np.nonzero((v[1:-1] > v[:-2]) & (v[1:-1] > v[2:]))[0] + 1
+        for k in peaks:
+            r = minimize_scalar(lambda c: -float(f(np.array(c))),
+                                bounds=(grid[k - 1], grid[k + 1]),
+                                method="bounded",
+                                options={"xatol": 1e-13})
+            out.append(float(r.x))
+    return np.array(sorted(out))
+
+
 # ===========================================================================
 # Closure providers
 # ===========================================================================
@@ -80,6 +104,24 @@ class ClosureProvider(ABC):
         return (safety * (q_hi - q_lo) / span,
                 safety * (I_hi - I_lo) / span)
 
+    def wavespeed_nodes(self):
+        """
+        Interior concentrations at which |dq0/dc| or |dI3/dc| can peak.
+
+        The LLF coefficient must be the maximum of the flux-function slope over
+        the WHOLE interval between the two states at a face, not just at its
+        two endpoints -- see transport.py's NUM-26 note and BCF25 (32)-(35),
+        which evaluate the endpoints only.  The endpoints are always probed; the
+        transport solver additionally probes every node returned here that lies
+        inside the interval, so this list must contain every interior extremum
+        of both derivatives for the bound to be exact.
+
+        The default is a uniform sample, which is a bound rather than a
+        guarantee; providers with closed-form closures return their actual
+        extrema.
+        """
+        return np.linspace(0.0, 1.0, 65)[1:-1]
+
     @property
     def is_linear(self) -> bool:
         """True when the closures do not depend on the velocity, so the
@@ -102,6 +144,17 @@ class NewtonianClosures(ClosureProvider):
 
     def dq0_dI3_dc(self, c, H, umag=None, h=None):
         return _newt.dq0_dc(c, self.m), _newt.dscript_I3_dc(c, self.m)
+
+    def wavespeed_nodes(self):
+        """The exact interior extrema of |q0'| and |I3'| at this m, located
+        once and cached.  Both are smooth rationals with at most a couple of
+        interior peaks -- |q0'| has none for m <= 1.5 and one above it, |I3'|
+        has two -- so the interval maximum this buys is exact, not a sample."""
+        if getattr(self, "_nodes", None) is None:
+            self._nodes = _extrema_of(
+                lambda c: np.abs(_newt.dq0_dc(c, self.m)),
+                lambda c: np.abs(_newt.dscript_I3_dc(c, self.m)))
+        return self._nodes
 
     @property
     def is_linear(self):
@@ -158,6 +211,11 @@ class TwoDGAClosures(ClosureProvider):
         c = np.asarray(c, dtype=float)
         return np.ones_like(c), np.zeros_like(c)
 
+    def wavespeed_nodes(self):
+        """Both derivatives are constant, so there is nothing between the
+        endpoints that the endpoints do not already bound."""
+        return np.empty(0)
+
 
 class TabulatedClosures(ClosureProvider):
     """Herschel-Bulkley path: interpolate a pre-built M3 table.  Velocity
@@ -191,6 +249,13 @@ class TabulatedClosures(ClosureProvider):
     def q0_I3(self, c, H, umag):
         _, _, q0, I3 = self.table(c, H=H, umag=umag, gb=self.gb)
         return q0, I3
+
+    def wavespeed_nodes(self):
+        """The table's own c nodes.  Between them the interpolant is linear, so
+        its derivative is piecewise constant and the endpoints of each segment
+        bound it -- probing the nodes therefore makes the interval maximum
+        exact for the interpolated closure that the solver actually uses."""
+        return np.asarray(self.table.c_values, dtype=float)[1:-1]
 
 
 # ===========================================================================

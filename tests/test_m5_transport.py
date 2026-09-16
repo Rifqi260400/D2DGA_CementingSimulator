@@ -189,44 +189,44 @@ def test_m5_t2_maximum_principle(beta, b, cfl):
 def test_m5_t2_cfl_bound_is_the_thing_doing_the_work():
     """
     The maximum principle is not incidental -- it is bought by BCF25 (44), and
-    the bound is close to sharp.
+    the bound is sharp.
 
-    Sharpness has to be demonstrated on the state that attains it, not on an
+    Sharpness has to be demonstrated on a state that attains it, not on an
     arbitrary rough field: (44) is a MINIMUM over cells, and a cell stepped past
     its own limit still stays positive if its neighbours happen to feed it.  The
-    state that exposes the bound is an isolated spike, where F_C is the only
-    non-zero term and c^{n+1} = c^n (1 - dt/dt_cell) exactly.
+    state that exposes the bound is an isolated spike, where every F_l(0) = 0
+    and the update collapses to c^{n+1} = c^n (1 - dt/dt_cell) exactly.
+
+    The cell's OWN limit is what is tested, not the global one: since NUM-26 the
+    wavespeeds are interval maxima, so placing the spike changes which cell
+    attains the global minimum.  The global bound is then checked to be no
+    larger, which is what makes stepping at it safe everywhere.
     """
     geo, ell, tr = build(n_phi=16, n_xi=80, m=0.3, b=8.0, beta=np.pi / 4, e=0.4)
     c = np.zeros((16, 80))
     psi = ell.solve(c, Q=1.0)          # Psi does not depend on c for Newtonian
-
-    # locate the cell with the tightest limit, then put the spike there
-    _, _, a_phi, a_xi = tr.fluxes(c, psi)
-    total = a_phi[:-1, :] + a_phi[1:, :] + a_xi[:, :-1] + a_xi[:, 1:]
-    k = np.where(total > 0, 2.0 * tr.Hra / np.maximum(total, 1e-300), np.inf)
-    p, q = np.unravel_index(np.argmin(k), k.shape)
+    p, q = 7, 40
     c[p, q] = 1.0
 
     Phi, Xi, a_phi, a_xi = tr.fluxes(c, psi)
-    dt_max = tr.max_timestep(a_phi, a_xi)
+    total = (a_phi[:-1, :] + a_phi[1:, :] + a_xi[:, :-1] + a_xi[:, 1:])
+    dt_cell = tr.cell_area * 2.0 * tr.Hra[p, q] / total[p, q]
+    assert tr.max_timestep(a_phi, a_xi) <= dt_cell * (1.0 + 1e-12)
 
     def advance(dt):
         lam = dt / tr.cell_area
         div = (Phi[1:, :] - Phi[:-1, :]) + (Xi[:, 1:] - Xi[:, :-1])
         return c - lam * div / tr.Hra
 
-    at_limit = advance(dt_max)
-    assert at_limit.min() >= -1e-14
-    assert at_limit.max() <= 1.0 + 1e-14
-    assert abs(at_limit[p, q]) < 1e-12          # the bound is attained here
+    assert abs(advance(dt_cell)[p, q]) < 1e-12          # the bound is attained
+    assert advance(1.6 * dt_cell)[p, q] == pytest.approx(-0.6, abs=1e-10)
 
-    over = advance(1.6 * dt_max)
-    assert over[p, q] < -0.1
-    assert over.min() < -0.1
+    at_global = advance(tr.max_timestep(a_phi, a_xi))
+    assert at_global.min() >= -1e-14
+    assert at_global.max() <= 1.0 + 1e-14
 
     with pytest.raises(ValueError, match="monotonicity limit"):
-        tr.step(c, psi, dt=2.0 * dt_max)
+        tr.step(c, psi, dt=2.0 * dt_cell)
 
 
 def test_k_equals_two_complement_sums_to_one():
@@ -244,6 +244,14 @@ def test_k_equals_two_complement_sums_to_one():
         def dq0_dI3_dc(self, c, H, umag=None, h=None):
             dq, dI = super().dq0_dI3_dc(1.0 - np.asarray(c, float), H, umag)
             return dq, dI      # d/dc[1 - q0(1-c)] = q0'(1-c); likewise -I3'
+
+        def wavespeed_nodes(self):
+            # The complement's derivatives peak at 1 - (the original peaks).
+            # Mirroring them is what makes the two solvers agree bit for bit:
+            # the LLF interval maximum (NUM-26) is part of the flux, so
+            # sum-to-one holds only if the two fluids' wavespeed bounds are
+            # themselves complementary.
+            return np.sort(1.0 - super().wavespeed_nodes())
 
     geo, ell, tr = build(n_phi=12, n_xi=60, beta=np.pi / 6, e=0.3, m=0.45, b=5.0)
     tr1 = TransportSolver(geo, Complement(0.45), buoyancy_number=5.0,

@@ -25,11 +25,13 @@ from which
     I1 = A + C                                            (2.14)
     I2 = (1-c) A + c E                                    (2.15)
     q0 = (A + c Bq) / I1                                  (2.22)
-    I3 = [ ((1-c) A + c^2 D) I1 - (A + c Bq) I2 ] / I1    (2.23)
+    I3 = [ (A + c Bq) I2 - ((1-c) A + c^2 D) I1 ] / I1    (2.23)
 
-The bracket ORDER in I3 is the one that reproduces BF25's own Lajeunesse
-translation (Section 3.2); the opposite order gives the right magnitude with
-the wrong sign.  See newtonian.py for the full CONV-03 write-up.
+The bracket ORDER in I3 is BF25 (2.23)'s, verbatim.  It is NEGATIVE on
+0 < c < 1 for a Newtonian pair, and that sign is the physics: the flux is
+q0 + b I3 (BF25 3.7), so a favourable density difference (b > 0) SUBTRACTS
+from the dispersive flux.  See newtonian.py for the full CONV-03 write-up and
+for the three independent confirmations of the sign.
 """
 
 from __future__ import annotations
@@ -83,7 +85,7 @@ def closures_from_solution(sol: GapSolution) -> Closures:
 
     I2 = (1.0 - c) * A + c * E
     q0 = (A + c * Bq) / I1
-    I3 = (((1.0 - c) * A + c ** 2 * D) * I1 - (A + c * Bq) * I2) / I1
+    I3 = ((A + c * Bq) * I2 - ((1.0 - c) * A + c ** 2 * D) * I1) / I1
     return Closures(c, I1, I2, q0, I3)
 
 

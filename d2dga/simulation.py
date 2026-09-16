@@ -70,6 +70,33 @@ class RunResult:
         """Linearly interpolated displacement efficiency at time t."""
         return float(np.interp(t, self.times, self.efficiency))
 
+    def breakthrough_at(self, threshold):
+        """
+        First time the outlet concentration reaches `threshold`, from the
+        recorded history rather than from the running detector -- so one run
+        can be reported at several thresholds.
+
+        Worth reporting as a sweep, because ZF22's definition ("the time at
+        which the displacing fluid first exits the annulus") is exact only for
+        a sharp front.  D2DGA fronts are not sharp: BF25 Section 3.1's spike
+        regime puts a vanishingly thin tip ahead of the main shock, moving at
+        the Poiseuille centreline speed 1.5 whatever the buoyancy.  A small
+        threshold therefore measures the spike and a large one the shock, and
+        the two can differ by a factor of 1.5.  assumptions.md NUM-21.
+        """
+        out = self.outlet_concentration
+        hit = np.nonzero(out >= threshold)[0]
+        if hit.size == 0:
+            return np.nan
+        k = int(hit[0])
+        if k == 0:
+            return float(self.times[0])
+        lo, hi = out[k - 1], out[k]
+        if hi <= lo:
+            return float(self.times[k])
+        frac = (threshold - lo) / (hi - lo)
+        return float(self.times[k - 1] + frac * (self.times[k] - self.times[k - 1]))
+
 
 class Simulation:
     """
