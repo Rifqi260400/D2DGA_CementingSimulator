@@ -41,7 +41,7 @@ Status key — **Conflict**: sources disagree, a choice was forced.
 | ID | Choice | Value used | Source status | Justification | Sensitivity tested? |
 |---|---|---|---|---|---|
 | NUM-01 (Q2) | CFL number | **0.5 default; transport half resolved.** | BCF25 says "< 1", never gives a value | **Measured, not assumed — and the result runs against the usual instinct.** On the m = 1 rarefaction against its exact solution the L1 error *rises* as the CFL number falls: **0.0031 at 0.95, 0.0079 at 0.5, 0.0102 at 0.25** — a factor of 3.3 across the range. That is the expected behaviour of a first-order upwind scheme (exact at CFL = 1 for linear advection), so "smaller timestep, safer" is wrong for accuracy here. Monotonicity does not constrain the choice either: BCF25 (44) is evaluated on `Ψⁿ` and `c̄ⁿ`, both known before the step, so a large CFL number is not a gamble — the maximum principle is asserted at **0.99**. What is still open is the *other* half: the elliptic/transport splitting error, which grows with `Δt` and is invisible while `Ψ` is frozen. Default left at 0.5 pending **M6-T4**. | **Yes — `test_q2_cfl_number_accuracy_and_monotonicity`, and M5-T2 at cfl = 0.99** |
-| NUM-02 (Q3) | AL parameters `r`, `ρ`, tolerance | *pending* | PF04 gives only `0 < ρ < r(1+√5)/2`; BF25 Figs 18–19 show convergence but not values | To be tuned at M2; BF25 notes sensitivity to the initial guess — try continuation from the previous timestep | Pending |
+| NUM-02 (Q3) | AL parameters `r`, `ρ`, tolerance | **Resolved: `ρ = r`, chosen by probing at table-build time (`TwoLayerGapSolver.tuned`). Tolerance 1e-9.** | PF04 gives only `0 < ρ < r(1+√5)/2`; BF25 A.2.3 reports "ρ = r = 1" and neither says how to choose it. | **`r = 1` is badly scaled once buoyancy is strong, and the cost is severe.** Measured on the K-GEP-1 fluid pair (`B = 11.9`, `m = 0.0064`): at `gb = 0`, `r = 1` takes 22 iterations and the whole range `r = 0.01…1` sits on a plateau near 20; at `gb = 27.9`, `r = 1` takes **3434 iterations (5.4 s)**, `r = 0.1` takes 392, and `r = 0.01` takes **56 (0.09 s) — 61× faster**. Below `r ≈ 0.003` it degrades again at both, so the optimum is a genuine minimum, not "smaller is better". The converged closures agree to **13–14 significant figures across the whole ladder**, which is the property that makes this an optimisation rather than a knob: `r` sets the *rate* and never the answer. **The optimum is fluid-pair dependent, which is what settles the design**: for a Bingham-Newtonian pair at the same `gb = 25`, `r = 1` is already near optimal and `r = 0.01` is ~20× *worse*. A single new fixed default would have traded one badly scaled case for another, so a closure table probes the ladder once at the largest `\|gb\|` on its own axis — a second or two, amortised over thousands of solves. Effect in practice: the K-GEP-1 735-point table went from **not finishing in 10 minutes to 180 s**. | **Yes — `test_num02_al_parameter_sets_the_rate_and_never_the_answer` asserts both halves: r-independence of the closures to 1e-10, and that the iteration count really moves** |
 | NUM-03 (Q4) | Closure table resolution | *pending* | Silent | Refine until M3-T1 passes with margin | Pending |
 | NUM-04 (Q5) | Bottom-hole inflow condition | **`no_axial_gradient` (B02 70) — resolved.** `uniform` also implemented and selectable | B02 §3.2 calls its own choice uncertain | B02's justification (entry effects negligible in long annuli) is weaker here: their well is 1000 m, K-GEP-1's open hole is 196 m — so it was measured rather than assumed. **Result:** the two conditions differ by 22% of 2Q *at* the boundary but the difference falls below 1% of its peak within **1.3 m — 0.7% of the 196 m open hole**. The choice is therefore immaterial except immediately above bottom hole, and B02 (70) is kept. ⚠️ An earlier commit accepted `inflow='uniform'` and silently ignored it; then a second attempt appended the Dirichlet row *after* the flux stencil, and because scipy **sums** duplicate entries the row became flux+1 instead of an identity. Both fixed and guarded by tests. | **Yes — `test_q5_inflow_choice_is_local_to_bottom_hole`** |
 | NUM-05 (Q6) | φ symmetry vs periodicity | Symmetry (default) | All published 2D work imposes symmetry | ZF22 §5 notes periodicity permits azimuthal asymmetry and is a small change. Hook to be left. | Pending |
@@ -161,6 +161,40 @@ them, which is a consistency check on the comparison itself.
 | ID | What | Result |
 |---|---|---|
 | BENCH-08 | **ZF23 Table 3, D2DGA columns** (both cases are concentric, so the flow is planar and BF25 §3.1 applies exactly) | **EXP 48** (`e=0, b_ZF=30, m=0.8`): `σ_{w+r}` **0.122 vs 0.1369** (−11%), `σ_{w−r}` **0.601 vs 0.5493** (+9%). **EXP 96** (`e=0, b_ZF=750, m=0.2`): `σ_{w+r}` **0.021 vs 0.0368**. ⚠️ The EXP 96 gap is the dispersive **spike**: at `b_BF25 = 335` it is only `2√m/b = 0.0027` wide in concentration, so the exact theory puts almost all of it inside a single bin while a finite mesh smears it across several — ZF23's own figure 7 caption says "a finer mesh would better represent the spike". Both agree on every ZF23 (3.6) threshold: EXP 48 dispersive, EXP 96 not. |
+
+---
+
+## Fluids (K-GEP-1)
+
+Source, user-selected 2026-09-16: **Table 1 of "Numerical Analysis of Cement
+Placement Into Drilling Fluid in Oilwell Applications", *Materials* 2025, 18,
+3098.**  Properties taken verbatim; nothing else from that paper is used.
+
+| | cement slurry (displacing, fluid 2) | drilling fluid (displaced, fluid 1) |
+|---|---|---|
+| density | 1200 kg/m³ | 998 kg/m³ |
+| model | Herschel–Bulkley | Newtonian |
+| viscosity | — | 1×10⁻³ Pa·s |
+| consistency `κ` | 0.6 Pa·sⁿ | — |
+| flow index `n` | 0.4 | — |
+| yield stress `τ_Y` | 1.4 Pa | — |
+
+Resulting dimensionless groups on K-GEP-1 (`r̂_a* = 110.6 mm`, `δ* = 0.193`,
+`Z = 564`):
+
+| `ŵ₀` | `m` | `B` | `b` | `Fr*` |
+|---|---|---|---|---|
+| 0.05 m/s | 0.00278 | 31.5 | 29.3 | 0.0831 |
+| 0.20 m/s | 0.00638 | 11.9 | 27.9 | 0.0852 |
+| 0.50 m/s | 0.01105 | 6.29 | 26.1 | 0.0881 |
+
+| ID | Issue | Why it has to travel with every result |
+|---|---|---|
+| FLU-01 | **The source's "drilling fluid" is WATER** — 998 kg/m³, 1 mPa·s, Newtonian. | A real drilling mud is 1100–1600 kg/m³ and carries a yield stress. The consequence is `m ≈ 0.003–0.011`: the displacing fluid comes out **100–360× more viscous** than the displaced one, which is an unusually *favourable* viscosity ratio. Any displacement efficiency computed from this pair is **optimistic**, and the number should not be quoted as a K-GEP-1 prediction without saying so. |
+| FLU-02 | Its cement is **denser** than its "mud" (1200 vs 998), so `b > 0`. | Favourable and stabilising, landing at `b = 26–29` — comparable to ZF22's strongly buoyant cases 2/5/9, which displace near-piston. The resulting 1-D flux `q₀ + b𝓘₃` reaches **−25** in mid-range, far below the chord, so the entropy solution is a shock at the mean speed. Good displacement is the *expected* answer here, which is exactly why FLU-01 matters. |
+| FLU-03 | Its flow is **downward** ("the cement slurry inlet velocity, which is downward"). | Ours — and B02/PF04/ZF22/BF25/BCF25 without exception — is *upward* annular displacement. Only the properties cross over; the geometry, flow direction and boundary conditions do not. |
+| FLU-04 | The paper's 0.5 / 0.2 / 0.05 m/s are used as the **annular mean velocity** `ŵ₀`. | They are quoted as inlet velocities in that paper's own, much smaller annulus. Treating them as K-GEP-1's annular mean velocity is a *reading*, not a measurement. The pump schedule for K-GEP-1 is still outstanding. |
+| FLU-05 | The pair is **Herschel–Bulkley with large `B`**, so it runs the M3 tabulated-closure path and the Picard elliptic, not the fast Newtonian one. | NUM-13's mobility-floor regularisation becomes live, and PF04 §5 warns that regularisation flatters mud removal. Measured at `ŵ₀ = 0.2 m/s` the cement is **fully yielded** (unyielded fraction 0 at unit mean velocity), so the regularisation should not bite — but `n_static_cells` must be checked on every run and reported, not assumed zero. |
 
 ---
 

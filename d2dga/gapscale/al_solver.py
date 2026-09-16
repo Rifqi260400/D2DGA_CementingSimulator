@@ -94,6 +94,51 @@ class TwoLayerGapSolver:
         # norm exponent, BF25 A.2.3
         self.p = 1.0 + min(fluid1.power_law_index, fluid2.power_law_index)
 
+    # -- augmented-Lagrangian parameter (NUM-02 / Q3) ------------------------
+    R_LADDER = (1.0, 0.3, 0.1, 0.03, 0.01, 0.003, 0.001)
+
+    @classmethod
+    def tuned(cls, fluid1, fluid2, gb_probe: float = 0.0, c_probe: float = 0.5,
+              umag_probe: float = 1.0, ladder=None, **kwargs):
+        """
+        Build a solver with r = rho chosen by probing, rather than left at 1.
+
+        PF04 gives only the constraint 0 < rho < r(1 + sqrt 5)/2 and BF25 A.2.3
+        reports "rho = r = 1"; neither says how to choose r, and the default is
+        badly scaled once buoyancy is strong.  MEASURED on the K-GEP-1 fluid
+        pair (B = 11.9, m = 0.0064):
+
+            gb = 0     r = 1 -> 22 iterations;  the whole range r = 0.01..1
+                       sits on a plateau at ~20.
+            gb = 27.9  r = 1 -> 3434 iterations, 5.4 s
+                       r = 0.1  -> 392
+                       r = 0.01 ->  56 iterations, 0.09 s   -- 61x faster
+
+        Below r ~ 0.003 it degrades again at both, so the optimum is a genuine
+        minimum rather than "smaller is better".  The converged closures agree
+        to 13-14 significant figures across the entire ladder, which is the
+        augmented-Lagrangian property one wants: r sets the RATE and never the
+        answer.  That is asserted in tests/test_m2_closures.py, so a future
+        change of r cannot silently move a result.
+
+        The probe costs one gap-scale solve per rung -- a second or two -- and
+        is amortised over the thousands of solves a closure table needs.
+        """
+        best, best_iters = None, None
+        for r in (cls.R_LADDER if ladder is None else ladder):
+            trial = cls(fluid1, fluid2, r=r, rho=r, **kwargs)
+            sol = trial.solve_fixed_mean_velocity(
+                c_probe, [0.0, umag_probe], [0.0, gb_probe])
+            iters = sol.iterations if sol.converged else np.inf
+            if best_iters is None or iters < best_iters:
+                best, best_iters = trial, iters
+        if best_iters is None or not np.isfinite(best_iters):
+            raise RuntimeError(
+                "no value on the r ladder converged for this fluid pair; "
+                "widen `ladder` or raise max_iter")
+        best.tuning_iterations = int(best_iters)
+        return best
+
     # -- grid ---------------------------------------------------------------
     def _grid(self, c):
         """Two uniform sub-grids meeting exactly at the interface y = c, so the

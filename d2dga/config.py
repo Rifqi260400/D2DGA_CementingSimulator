@@ -110,6 +110,68 @@ class SyntheticWallConfig:
 
 
 # --------------------------------------------------------------------------
+# Fluids
+# --------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FluidsConfig:
+    """
+    Mud and cement properties.
+
+    SOURCE, user-selected 2026-09-16: Table 1 of "Numerical Analysis of Cement
+    Placement Into Drilling Fluid in Oilwell Applications", Materials 2025, 18,
+    3098.  Taken verbatim; only the properties are taken, not that paper's
+    geometry or flow direction.
+
+    Three things about this source have to travel with any result built on it.
+    See docs/assumptions.md FLU-01..03.
+
+      1. Its "drilling fluid" is WATER -- 998 kg/m3, 1 mPa s, Newtonian.  A real
+         drilling mud is 1100-1600 kg/m3 and carries a yield stress.  The
+         consequence is m ~ 0.003-0.011 on K-GEP-1: the displacing fluid comes
+         out 100-360 times more viscous than the displaced one, which is an
+         unusually FAVOURABLE viscosity ratio.  Any displacement efficiency
+         computed from this pair is optimistic.
+      2. Its cement is denser than its "mud" (1200 vs 998), so b > 0 -- a
+         favourable, stabilising density difference -- and b lands at 26-29 on
+         K-GEP-1, comparable to ZF22's strongly buoyant cases 2/5/9.
+      3. Its flow is DOWNWARD ("the cement slurry inlet velocity, which is
+         downward").  Ours, and B02/PF04/ZF22/BF25 without exception, is upward
+         annular displacement.  Only the properties cross over.
+
+    The cement is Herschel-Bulkley with a large Bingham number (B = 6-32 over
+    the paper's velocity range), so runs with this pair go through the M3
+    tabulated-closure path and the Picard elliptic, NOT the fast Newtonian one
+    -- and NUM-13's mobility-floor regularisation becomes load-bearing.
+    """
+
+    # Table 1, displaced fluid ("Drilling Fluid", Newtonian)
+    mud_density: float = 998.0            # kg/m^3
+    mud_viscosity: float = 1.0e-3         # Pa s
+
+    # Table 1, displacing fluid ("Cement Slurry", Herschel-Bulkley)
+    cement_density: float = 1200.0        # kg/m^3
+    cement_consistency: float = 0.6       # Pa s^n
+    cement_power_law_index: float = 0.4   # -
+    cement_yield_stress: float = 1.4      # Pa
+
+    # The paper's three inlet velocities.  Used here as the ANNULAR mean
+    # velocity w0_hat, which is what BF25's scaling takes; the paper quotes
+    # them as inlet velocities in its own much smaller annulus, so this is a
+    # reading, not a measurement.  ASSUMPTION FLU-04.
+    mean_velocities_m_s: tuple = (0.05, 0.2, 0.5)
+
+    def as_fluids(self):
+        """(displaced, displacing) in BF25's index convention."""
+        from .scaling import HerschelBulkleyFluid
+        return (HerschelBulkleyFluid("drilling fluid (water)", self.mud_density,
+                                     self.mud_viscosity, 1.0, 0.0),
+                HerschelBulkleyFluid("cement slurry", self.cement_density,
+                                     self.cement_consistency,
+                                     self.cement_power_law_index,
+                                     self.cement_yield_stress))
+
+
+# --------------------------------------------------------------------------
 # Numerical grid
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -129,4 +191,5 @@ class Config:
     well: WellConfig = field(default_factory=WellConfig)
     standoff: StandoffConfig = field(default_factory=StandoffConfig)
     synthetic_wall: SyntheticWallConfig = field(default_factory=SyntheticWallConfig)
+    fluids: FluidsConfig = field(default_factory=FluidsConfig)
     grid: GridConfig = field(default_factory=GridConfig)

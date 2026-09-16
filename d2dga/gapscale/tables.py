@@ -73,7 +73,11 @@ class ClosureTable:
     n_y: int = 400
     tol: float = 1e-10
     max_iter: int = 60000
+    # None = choose r by probing at build time (NUM-02).  Give a number to pin
+    # it, e.g. to reproduce an older table exactly.
+    r: float | None = None
 
+    tuned_r: float = field(default=float("nan"), init=False)
     _values: dict = field(default_factory=dict, init=False, repr=False)
     _interp: dict = field(default_factory=dict, init=False, repr=False)
     _axes: list = field(default_factory=list, init=False, repr=False)
@@ -102,8 +106,19 @@ class ClosureTable:
         self._axes = self._axis_list()
         shape = self.shape
         out = {k: np.zeros(shape) for k in ("I1", "I2", "q0", "I3")}
-        solver = TwoLayerGapSolver(self.fluid1, self.fluid2, n_y=self.n_y,
-                                   tol=self.tol, max_iter=self.max_iter)
+        gb_axis = self._axes[3][1]
+        gb_probe = float(gb_axis[np.argmax(np.abs(gb_axis))])
+        common = dict(n_y=self.n_y, tol=self.tol, max_iter=self.max_iter)
+        if self.r is None:
+            # Probe at the LARGEST |gb| on the table's own axis: that is the
+            # stiffest point, and r matters only where buoyancy is strong.
+            solver = TwoLayerGapSolver.tuned(self.fluid1, self.fluid2,
+                                             gb_probe=gb_probe, **common)
+            self.tuned_r = solver.r
+        else:
+            solver = TwoLayerGapSolver(self.fluid1, self.fluid2, r=self.r,
+                                       rho=self.r, **common)
+            self.tuned_r = self.r
         self.n_failed = 0
 
         grids = [a for _, a in self._axes]
@@ -113,7 +128,8 @@ class ClosureTable:
             for k in out:
                 out[k][idx] = getattr(cl, k)
         if verbose:
-            print(f"built {self.n_points} points, {self.n_failed} unconverged")
+            print(f"built {self.n_points} points, {self.n_failed} unconverged, "
+                  f"r = {self.tuned_r:g}")
 
         self._values = out
         pts = tuple(a for _, a in self._axes)
@@ -143,7 +159,8 @@ class ClosureTable:
                              self.fluid2.consistency / H ** self.fluid2.power_law_index,
                              self.fluid2.power_law_index, self.fluid2.yield_stress)
             solver = TwoLayerGapSolver(f1, f2, n_y=self.n_y, tol=self.tol,
-                                       max_iter=self.max_iter)
+                                       max_iter=self.max_iter,
+                                       r=solver.r, rho=solver.rho)
         sol = solver.solve_fixed_mean_velocity(c, [0.0, umag], [0.0, gb * H])
         if not sol.converged:
             self.n_failed += 1

@@ -330,3 +330,77 @@ def test_interface_lands_exactly_on_a_cell_face():
     for c in (0.01, 0.13, 0.5, 0.77, 0.99):
         sol = solver.solve_fixed_mean_velocity(c, [0.0, 1.0], [0.0, 0.0])
         assert np.min(np.abs(sol.y_edges - c)) < 1e-14
+
+
+# ------------------------------------------------- NUM-02 / Q3 ------------
+def test_num02_al_parameter_sets_the_rate_and_never_the_answer():
+    """
+    NUM-02 (Q3).  PF04 gives only 0 < rho < r(1+sqrt5)/2 and BF25 A.2.3 reports
+    "rho = r = 1"; neither says how to choose r.  Three things have to hold for
+    `TwoLayerGapSolver.tuned` to be a legitimate optimisation rather than a
+    tuning knob that moves results:
+
+      1. the converged closures must be INDEPENDENT of r -- to within the
+         convergence tolerance, which is what that phrase actually means, not
+         to machine precision;
+      2. the iteration count must really depend on it, or there is nothing to
+         tune;
+      3. the best r must be FLUID-PAIR dependent, or a new fixed default would
+         do and probing would be waste.
+
+    Point 3 is the one that settles the design, and it is easy to get wrong:
+    for the K-GEP-1 pair r = 1 costs 3434 iterations against 56 at r = 0.01, a
+    factor of 61 -- but for the pair below r = 1 is already near optimal and
+    r = 0.01 is ~20x WORSE.  A single new default would therefore have traded
+    one badly scaled case for another.
+    """
+    from d2dga.config import FluidsConfig
+    from d2dga.geometry import build_geometry
+    from d2dga.config import Config
+    from d2dga.scaling import Scaling
+
+    cfg = Config()
+    geo = build_geometry(cfg)
+    mud, cement = cfg.fluids.as_fluids()
+    sc = Scaling(mud, cement, r_a_hat_star=geo.r_a_hat_star,
+                 delta_star=geo.delta_star, mean_velocity=0.2)
+    f1, f2, gb = sc.scaled_fluid1, sc.scaled_fluid2, sc.buoyancy_number
+    assert gb > 20.0                       # strongly buoyant, where r matters
+
+    got = {}
+    for r in (1.0, 0.1, 0.01):
+        solver = TwoLayerGapSolver(f1, f2, n_y=200, r=r, rho=r, tol=1e-9,
+                                   max_iter=200000)
+        sol = solver.solve_fixed_mean_velocity(0.5, [0.0, 1.0], [0.0, gb])
+        assert sol.converged, r
+        got[r] = (closures_from_solution(sol), sol.iterations)
+
+    # (1) r-independence, to the convergence tolerance
+    ref = got[1.0][0]
+    for r, (cl, _) in got.items():
+        assert cl.I1 == pytest.approx(ref.I1, rel=1e-7), r
+        assert cl.I3 == pytest.approx(ref.I3, rel=1e-6, abs=1e-12), r
+
+    # (2) the cost really moves -- and in this direction for this pair
+    assert got[1.0][1] > 20 * got[0.01][1], {k: v[1] for k, v in got.items()}
+
+    # (3) the SAME r is far from optimal for a different pair, so a fixed
+    # default cannot serve both
+    g1, g2 = newtonian_pair(0.2)
+    g2 = ScaledFluid("displacing", 1.0, g2.consistency, 0.5, 0.8)
+    other = {}
+    for r in (1.0, 0.01):
+        solver = TwoLayerGapSolver(g1, g2, n_y=200, r=r, rho=r, tol=1e-9,
+                                   max_iter=200000)
+        sol = solver.solve_fixed_mean_velocity(0.5, [0.0, 1.0], [0.0, 25.0])
+        assert sol.converged, r
+        other[r] = sol.iterations
+    assert other[0.01] > 5 * other[1.0], other
+
+    # (4) probing picks a rung at least as good as the default, on both pairs
+    for (a, bb, g, worst) in ((f1, f2, gb, got[1.0][1]),
+                              (g1, g2, 25.0, other[1.0])):
+        tuned = TwoLayerGapSolver.tuned(a, bb, gb_probe=g, n_y=200, tol=1e-9,
+                                        max_iter=200000)
+        sol = tuned.solve_fixed_mean_velocity(0.5, [0.0, 1.0], [0.0, g])
+        assert sol.converged and sol.iterations <= worst

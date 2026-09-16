@@ -92,11 +92,17 @@ def test_m3_t1_h_rescaling_matches_a_direct_solve(hb_pair, H):
     rescaled = [ScaledFluid(f.name, f.density,
                             f.consistency / H ** f.power_law_index,
                             f.power_law_index, f.yield_stress) for f in (f1, f2)]
-    solver = TwoLayerGapSolver(*rescaled, n_y=200, tol=1e-9, max_iter=60000)
-    direct = closures_from_solution(
-        solver.solve_fixed_mean_velocity(0.45, [0.0, 1.0], [0.0, 0.0]))
     tab = ClosureTable(f1, f2, c_grid=np.array([0.45]),
                        h_grid=np.array([H]), n_y=200, tol=1e-9).build()
+    # The direct solve must use the table's OWN augmented-Lagrangian parameter.
+    # Since NUM-02 the table picks r by probing, and two AL solves at different
+    # r agree only to within the convergence TOLERANCE (1e-9 here), not to
+    # machine precision -- so comparing across different r would be measuring
+    # the solver's tolerance rather than the (A4) rescaling this test is about.
+    solver = TwoLayerGapSolver(*rescaled, n_y=200, tol=1e-9, max_iter=60000,
+                               r=tab.tuned_r, rho=tab.tuned_r)
+    direct = closures_from_solution(
+        solver.solve_fixed_mean_velocity(0.45, [0.0, 1.0], [0.0, 0.0]))
     got = tab(0.45, H=H)
     for value, ref in zip(got, direct.as_tuple()):
         assert np.isclose(float(value), ref, rtol=1e-10, atol=1e-14)
