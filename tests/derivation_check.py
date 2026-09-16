@@ -1,0 +1,176 @@
+"""
+Section 3.3 derivation check.
+
+Question: BF25 eliminates the pressure between the two components of (2.13) to
+reach the elliptic equation (2.16), ``div_a . [S + b] = 0``.  That step was
+performed for a uniform annulus (r_a = 1, H = H(phi)).  Does it survive a
+caliper-driven geometry, where H = H(phi, xi) and r_a = r_a(xi)?
+
+We answer symbolically.  Everything is carried in BF25 convention (Section 1.1
+of the build spec); no other paper's scaling appears in this file.
+
+Starting point, BF25 (2.13), with the buoyancy vector written out from
+(2.11)-(2.12):
+
+    (H vbar, H wbar) = I1 * G  -  (I2 / H) * Gb
+
+    G  = -grad_a(p) + (rho   / (r_a Fr2)) * ( f_xi, -f_phi )
+    Gb =              (drho  / (r_a Fr2)) * ( f_xi, -f_phi )
+
+    f  = (f_phi, f_xi) = ( r_a cos(beta),  r_a sin(beta) sin(pi phi) )
+    grad_a = ( (1/r_a) d/dphi ,  d/dxi )
+
+with rho = 1 - cbar*drho the volume-averaged density (fluid 1 scaled to 1) and
+drho = rho1 - rho2.
+
+Stream function, BF25 / ZF22 (2.2) convention -- note the factor 2:
+
+    grad_a(Psi) = ( 2 H wbar , -2 H vbar )
+
+Target form, BF25 (2.16)-(2.18):
+
+    div_a . [ S + b_vec ] = 0 ,   S = r_a grad_a(Psi) / (2 I1)
+
+We do NOT assume BF25's printed expression for the scalar multiplying f.  We
+derive it, and then compare against (2.18).  That comparison is the point of
+this script: see the r_a bookkeeping note at the bottom.
+"""
+
+import sympy as sp
+
+phi, xi = sp.symbols('phi xi', real=True)
+
+# --- geometry: fully variable, this is the modification under test -----------
+r_a = sp.Function('r_a')(xi)          # local mean radius, varies with depth
+H = sp.Function('H')(phi, xi)         # scaled half-gap, varies both ways
+beta = sp.Function('beta')(xi)        # inclination, kept general (not fixed to 0)
+
+# --- fields ------------------------------------------------------------------
+Psi = sp.Function('Psi')(phi, xi)
+p = sp.Function('p')(phi, xi)
+cbar = sp.Function('cbar')(phi, xi)
+
+# --- closures: BF25 (2.14)-(2.15) factorisation  I1 = H^3 script_I1, etc. ----
+# script_I1, script_I2 depend on cbar (and rheology), hence on (phi, xi).
+sI1 = sp.Function('sI1')(phi, xi)
+sI2 = sp.Function('sI2')(phi, xi)
+I1 = H**3 * sI1
+I2 = H**4 * sI2
+
+drho, Fr2 = sp.symbols('Delta_rho Fr2', real=True, positive=False)
+rho = 1 - cbar * drho
+
+f_phi = r_a * sp.cos(beta)
+f_xi = r_a * sp.sin(beta) * sp.sin(sp.pi * phi)
+
+
+def grad_a(q):
+    return (sp.diff(q, phi) / r_a, sp.diff(q, xi))
+
+
+def div_a(q_phi, q_xi):
+    return sp.diff(q_phi, phi) / r_a + sp.diff(q_xi, xi)
+
+
+# --- BF25 (2.13), component form --------------------------------------------
+# The buoyancy direction (f_xi, -f_phi) is common to G and Gb, so collect it.
+Lam = (rho - drho * I2 / (H * I1)) / (r_a * Fr2)
+
+gp_phi, gp_xi = grad_a(p)
+
+Hv = I1 * (-gp_phi + Lam * f_xi)
+Hw = I1 * (-gp_xi + Lam * (-f_phi))
+
+# --- stream function substitution -------------------------------------------
+# grad_a(Psi) = (2 H wbar, -2 H vbar)  =>  H wbar = Psi_phi/(2 r_a),
+#                                          H vbar = -Psi_xi/2
+Hv_sf = -sp.diff(Psi, xi) / 2
+Hw_sf = sp.diff(Psi, phi) / (2 * r_a)
+
+# --- solve each component for the pressure gradient -------------------------
+# From Hv:  -Psi_xi/2 = I1*(-p_phi/r_a + Lam*f_xi)
+p_phi = sp.simplify(r_a * (Hv_sf / (-I1) + Lam * f_xi))
+# From Hw:  Psi_phi/(2 r_a) = I1*(-p_xi - Lam*f_phi)
+p_xi = sp.simplify(Hw_sf / (-I1) - Lam * f_phi)
+
+# --- cross-differentiate to eliminate p -------------------------------------
+compat = sp.diff(p_phi, xi) - sp.diff(p_xi, phi)
+
+# --- candidate target form ---------------------------------------------------
+# S per BF25 (2.17).  b_vec = b_s * f with b_s derived (not assumed).
+gPsi_phi, gPsi_xi = grad_a(Psi)
+S_phi = r_a * gPsi_phi / (2 * I1)
+S_xi = r_a * gPsi_xi / (2 * I1)
+
+b_s = (1 - drho * (cbar + sI2 / sI1)) / Fr2       # <- derived below, see notes
+b_phi = b_s * f_phi
+b_xi = b_s * f_xi
+
+target = div_a(S_phi + b_phi, S_xi + b_xi)
+
+# compat was assembled as d_xi(p_phi) - d_phi(p_xi).  Expanding both:
+#
+#   compat = d_xi[ r_a Psi_xi /(2 I1) + r_a Lam f_xi ]
+#          + d_phi[ Psi_phi /(2 r_a I1) +     Lam f_phi ]
+#
+#   target = (1/r_a) d_phi[ S_phi + b_phi ] + d_xi[ S_xi + b_xi ]
+#
+# S_phi = Psi_phi/(2 I1) and r_a is phi-independent, so (1/r_a) d_phi[S_phi]
+# = d_phi[Psi_phi/(2 r_a I1)]: the Psi parts coincide term for term.  Matching
+# the buoyancy parts then forces b_vec = r_a * Lam * f, i.e. exactly the b_s
+# defined above.  So the relation to test is compat - target, coefficient 1.
+residual = sp.simplify(sp.expand(compat - target))
+
+print("=" * 72)
+print("Section 3.3  --  cross-differentiation under H(phi,xi), r_a(xi)")
+print("=" * 72)
+print()
+print("residual of  [d_xi(p_phi) - d_phi(p_xi)]  -  div_a[S + b_vec] :")
+print()
+print("   ", residual)
+print()
+if residual == 0:
+    print("RESULT: identically zero.  The pressure-elimination step is EXACT")
+    print("        for axially varying r_a(xi) and fully varying H(phi,xi).")
+    print("        No residual O(delta) terms are generated by the geometry.")
+else:
+    print("RESULT: NON-ZERO.  Stop and report -- extra terms survive.")
+
+# --- where does the slow-variation assumption actually live? ----------------
+# Check 1: does script_I2/script_I1 stay H-free under the factorisation?
+ratio = sp.simplify(I2 / (H * I1))
+print()
+print("-" * 72)
+print("check: I2/(H*I1) =", ratio, " -> H cancels, so the buoyant-mobility")
+print("       ratio is a function of cbar and rheology only (BF25 A4 rescaling).")
+
+# Check 2: div_a . f, the term BF25 (2.18) drops.
+divf = sp.simplify(div_a(f_phi, f_xi))
+print()
+print("check: div_a . f =", divf)
+divf_vert = sp.simplify(divf.subs(beta, 0))
+print("       at beta = 0 (vertical, K-GEP-1):", divf_vert)
+print()
+print("-" * 72)
+print("r_a bookkeeping note")
+print("-" * 72)
+print("""
+BF25 (2.12) defines the scalar b = -Delta_rho / (r_a Fr*^2), i.e. WITH a 1/r_a.
+That 1/r_a is correct for Gb, because it cancels against the r_a inside
+(f_xi, -f_phi), leaving Gb r_a-free as the modified pressure gradient requires.
+
+But the scalar that multiplies f in the elliptic equation is, from this
+derivation,
+
+    b_s = (1/Fr*^2) [ 1 - Delta_rho ( cbar + script_I2/script_I1 ) ]
+
+which is r_a-FREE, i.e. b_s = 1/Fr*^2 + (r_a * b_(2.12)) (cbar + I2/I1).
+
+So the symbol `b` in BF25 (2.18) and the symbol `b` in BF25 (2.12) differ by a
+factor r_a.  In a uniform annulus r_a = 1 and the distinction is invisible,
+which is why it is not flagged in the paper.  With a caliper wall r_a varies
+along the well and the two CANNOT be used interchangeably.
+
+This code uses the derived b_s above.  It reduces to BF25 (2.18) at r_a = 1.
+Logged as assumption CONV-04.
+""")
