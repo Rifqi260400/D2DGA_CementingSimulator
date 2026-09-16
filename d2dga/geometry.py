@@ -590,8 +590,8 @@ def synthetic_wall_feasible(cfg: Config, amplitude_m: float, mode: str = "symmet
     r_o_min = 0.5 * D_g - a_r
     gap = r_o_min - r_i
     if gap <= 0.0:
-        return False, (f"negative gap: min hole {2*r_o_min/IN_TO_M:.2f} in vs casing "
-                       f"{D_g and well.casing_od_m/IN_TO_M:.2f} in")
+        return False, (f"negative gap: min hole {2 * r_o_min / IN_TO_M:.2f} in "
+                       f"vs casing {well.casing_od_m / IN_TO_M:.2f} in")
     d_min = 0.5 * gap
     d_gauge = 0.5 * (0.5 * D_g - r_i)
     e_hat_half = e_g * d_gauge

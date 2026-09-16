@@ -88,7 +88,23 @@ class TabulatedClosures(ClosureProvider):
     dependent, so the elliptic problem is nonlinear and is driven to a fixed
     point by Picard iteration."""
 
-    def __init__(self, table, gb: float = 0.0):
+    def __init__(self, table, gb: float = 0.0, inclination_rad: float = 0.0):
+        # The gap-scale problem depends on the buoyancy vector G~_b, which is
+        # two-dimensional in general:  G_b = -b (f_xi, -f_phi)  with
+        # f = (r_a cos beta, r_a sin beta sin(pi phi)).  For a VERTICAL well
+        # f_xi = 0, so G_b is purely axial and a single scalar axis suffices --
+        # which is the case tabulated here, and is K-GEP-1.
+        #
+        # For an inclined well G_b acquires a phi-dependent azimuthal component
+        # and the table would need an extra axis plus the angle between u_bar
+        # and G~_b.  Rather than silently return the wrong closure, refuse.
+        # assumptions.md NUM-14.
+        if abs(float(inclination_rad)) > 1e-12:
+            raise NotImplementedError(
+                "TabulatedClosures assumes a vertical well (beta = 0), where the "
+                "gap-scale buoyancy vector is purely axial and one scalar gb axis "
+                "is enough. For beta != 0 the table needs an azimuthal buoyancy "
+                "axis and an angle axis; see assumptions.md NUM-14.")
         self.table = table
         self.gb = float(gb)
 
@@ -130,7 +146,8 @@ class StreamFunctionSolver:
 
     def __init__(self, geometry: Geometry, closures: ClosureProvider,
                  froude: float, delta_rho: float,
-                 inflow: str = "no_axial_gradient"):
+                 inflow: str = "no_axial_gradient",
+                 mobility_floor: float = 1e-12):
         self.geom = geometry
         self.closures = closures
         self.Fr2 = float(froude) ** 2
@@ -138,6 +155,8 @@ class StreamFunctionSolver:
         if inflow not in ("no_axial_gradient", "uniform"):
             raise ValueError(f"unknown inflow condition {inflow!r}")
         self.inflow = inflow
+        self.mobility_floor = float(mobility_floor)
+        self.n_static_cells = 0
 
         g = geometry.grid
         self.n_phi, self.n_xi = g.n_phi, g.n_xi
@@ -153,14 +172,28 @@ class StreamFunctionSolver:
         self.beta = geometry.well.inclination_rad
         self.sin_pi_phi_xf = np.sin(np.pi * g.phi_edges)[:, None]
 
-        self._factorised = None
-        self._factorised_key = None
+        # Uniform-inflow profile, B02 Section 3.2's stated alternative to (70):
+        # impose a uniform inflow VELOCITY rather than zero axial gradient.
+        # w_bar = const at xi = 0 means dPsi/dphi = 2 H r_a there, so
+        #     Psi(phi, 0) = 2Q * int_0^phi H r_a dphi' / int_0^1 H r_a dphi'.
+        H0 = geometry.H(g.phi_edges, np.array([0.0]))[:, 0]
+        ra0 = float(geometry.r_a(np.array([0.0]))[0])
+        seg = 0.5 * (H0[1:] + H0[:-1]) * ra0 * g.dphi
+        cum = np.concatenate([[0.0], np.cumsum(seg)])
+        self._uniform_inflow_shape = cum / cum[-1]      # 0 at phi=0, 1 at phi=1
 
     # -- concentration onto the face families -------------------------------
     def _c_on_faces(self, c):
         """c is cell-centred, shape (n_phi, n_xi).  Average onto each face
         family, replicating at the domain edges."""
         c = np.asarray(c, dtype=float)
+        expected = (self.n_phi, self.n_xi)
+        if c.shape != expected:
+            raise ValueError(
+                f"concentration field has shape {c.shape}, expected {expected} "
+                f"(cell centres: n_phi x n_xi). A common slip is building it as "
+                f"xi_centres[None, :] < ..., which gives (1, n_xi) and then "
+                f"broadcasts into a cryptic failure deeper in the assembly.")
         pad_x = np.concatenate([c[:, :1], c, c[:, -1:]], axis=1)
         c_pf = 0.5 * (pad_x[:, :-1] + pad_x[:, 1:])          # (n_phi, n_xi+1)
         pad_p = np.concatenate([c[:1, :], c, c[-1:, :]], axis=0)
@@ -173,12 +206,33 @@ class StreamFunctionSolver:
         I1_pf, I2_pf = self.closures.script_I1_I2(c_pf, self.H_pf, umag_pf)
         I1_xf, I2_xf = self.closures.script_I1_I2(c_xf, self.H_xf, umag_xf)
 
-        floor = 1e-300
-        a_phi = 1.0 / (2.0 * self.ra_pf * self.H_pf ** 3 * np.maximum(I1_pf, floor))
-        a_xi = self.ra_xf / (2.0 * self.H_xf ** 3 * np.maximum(I1_xf, floor))
+        # Static cells.  For a yield-stress fluid I1 -> 0 where the material is
+        # unyielded.  In this formulation a = 1/(2 r_a H^3 I1) -> infinity, which
+        # is the CORRECT limit -- it drives grad Psi -> 0 so nothing flows -- but
+        # it cannot be represented in floating point, and I2/I1 becomes 0/0.
+        #
+        # We therefore floor the mobility.  This is a REGULARISATION, and PF04
+        # Section 5 is explicit that regularisation gives an overly optimistic
+        # picture of mud removal because it lets nominally static fluid creep,
+        # with the error accumulating over the long timescale of a cementing
+        # job.  Capturing true unyielded zones needs the augmented Lagrangian
+        # treatment of PF04 Section 3.1 applied at the 2-D level.
+        #
+        # For Newtonian fluids I1 > 0 everywhere and this never triggers, which
+        # is why `n_static_cells` is reported: a non-zero count on a Newtonian
+        # run means something is wrong, and on a yield-stress run it marks
+        # exactly where the regularisation is load-bearing.
+        # assumptions.md NUM-13.
+        floor = self.mobility_floor
+        self.n_static_cells = int(np.sum(I1_pf < floor) + np.sum(I1_xf < floor))
+        I1_pf = np.maximum(I1_pf, floor)
+        I1_xf = np.maximum(I1_xf, floor)
 
-        bs_pf = (1.0 - self.delta_rho * (c_pf + I2_pf / np.maximum(I1_pf, floor))) / self.Fr2
-        bs_xf = (1.0 - self.delta_rho * (c_xf + I2_xf / np.maximum(I1_xf, floor))) / self.Fr2
+        a_phi = 1.0 / (2.0 * self.ra_pf * self.H_pf ** 3 * I1_pf)
+        a_xi = self.ra_xf / (2.0 * self.H_xf ** 3 * I1_xf)
+
+        bs_pf = (1.0 - self.delta_rho * (c_pf + I2_pf / I1_pf)) / self.Fr2
+        bs_xf = (1.0 - self.delta_rho * (c_xf + I2_xf / I1_xf)) / self.Fr2
         B_phi = bs_pf * np.cos(self.beta)
         B_xi = bs_xf * self.ra_xf * np.sin(self.beta) * self.sin_pi_phi_xf
         return a_phi, a_xi, B_phi, B_xi
@@ -199,6 +253,26 @@ class StreamFunctionSolver:
         for i in range(1, self.n_phi):
             for j in range(self.n_xi + 1):
                 k = self._index(i, j)
+
+                # --- bottom-hole Dirichlet, uniform-inflow option -----------
+                # B02 Section 3.2 offers this as the alternative to (70):
+                # impose a uniform inflow VELOCITY instead of zero axial
+                # gradient.  B02 calls its own choice uncertain, and its
+                # justification -- entry effects negligible over a long annulus
+                # -- is weaker here: B02's well is 1000 m, K-GEP-1's open hole
+                # is 196 m.  assumptions.md NUM-04.
+                #
+                # This MUST be the first thing done for the row.  scipy sums
+                # duplicate (row, col) entries, so appending an identity after
+                # the flux stencil gives flux + 1 on the diagonal rather than a
+                # clean Dirichlet row, and the prescribed value never lands.
+                if self.inflow == "uniform" and j == 0:
+                    rows.append(k)
+                    cols.append(k)
+                    vals.append(1.0)
+                    rhs[k] = 2.0 * Q * self._uniform_inflow_shape[i]
+                    continue
+
                 diag = 0.0
 
                 # --- phi fluxes (Dirichlet at i = 0 and i = n_phi) ----------
@@ -208,10 +282,9 @@ class StreamFunctionSolver:
                     rhs[k] -= ae * psi_narrow / dphi2
                 else:
                     rows.append(k); cols.append(self._index(i + 1, j)); vals.append(ae / dphi2)
-                if i - 1 == 0:
-                    rhs[k] -= aw * 0.0 / dphi2
-                else:
+                if i - 1 != 0:
                     rows.append(k); cols.append(self._index(i - 1, j)); vals.append(aw / dphi2)
+                # (Psi = 0 on the wide side contributes nothing to the rhs)
 
                 # --- xi fluxes (homogeneous Neumann via ghost nodes) --------
                 an = a_xi[i, j] if j < self.n_xi else 0.0
@@ -220,7 +293,12 @@ class StreamFunctionSolver:
                 if j + 1 <= self.n_xi:
                     rows.append(k); cols.append(self._index(i, j + 1)); vals.append(an / dxi2)
                 if j - 1 >= 0:
-                    rows.append(k); cols.append(self._index(i, j - 1)); vals.append(asf / dxi2)
+                    if self.inflow == "uniform" and j == 1:
+                        # the j = 0 row is Dirichlet, so its value is known:
+                        # move it to the right-hand side
+                        rhs[k] -= asf * 2.0 * Q * self._uniform_inflow_shape[i] / dxi2
+                    else:
+                        rows.append(k); cols.append(self._index(i, j - 1)); vals.append(asf / dxi2)
 
                 rows.append(k); cols.append(k); vals.append(diag)
 
@@ -257,6 +335,7 @@ class StreamFunctionSolver:
         if self.closures.is_linear:
             return self.solve(c, Q), 1, 0.0
         psi = self.solve(c, Q)
+        err = np.inf
         for it in range(1, max_iter + 1):
             u_pf, u_xf = self.speed_on_faces(psi)
             new = self.solve(c, Q, umag_pf=u_pf, umag_xf=u_xf)
@@ -288,7 +367,6 @@ class StreamFunctionSolver:
     def speed_on_faces(self, psi):
         """|u_bar| = |grad_a Psi| / (2H) on each face family, for the
         velocity-dependent closures."""
-        g = self.geom.grid
         dpdphi_pf = (psi[1:, :] - psi[:-1, :]) / self.dphi           # (n_phi, n_xi+1)
         dpdxi_pf = np.gradient(0.5 * (psi[1:, :] + psi[:-1, :]), self.dxi, axis=1)
         mag_pf = np.hypot(dpdphi_pf / self.ra_pf, dpdxi_pf) / (2.0 * self.H_pf)

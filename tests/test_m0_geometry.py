@@ -242,3 +242,33 @@ def test_m0_synthetic_wall_feasibility_boundary():
     ok_below, _ = synthetic_wall_feasible(cfg, a_max * 0.99, mode="symmetric")
     ok_above, _ = synthetic_wall_feasible(cfg, a_max * 1.01, mode="symmetric")
     assert ok_below and not ok_above
+
+
+# ------------------------------------------------ GEO-02 standoff sweep ---
+def test_geo02_standoff_dominates_narrow_side_velocity():
+    """
+    Sensitivity of the standoff assumption, which was previously logged as a
+    default with no sensitivity testing.
+
+    The far-field narrow-side velocity fraction is (1-e)^2 / (1 + 1.5 e^2)
+    (derived in test_m4_elliptic.eccentric_far_field_velocity).  Sweeping the
+    gauge-hole eccentricity across plausible field values collapses it by more
+    than two orders of magnitude, so this is NOT a benign default: it is the
+    dominant control on predicted narrow-side displacement, and the K-GEP-1
+    centralizer record is required before any production claim.
+    """
+    cfg = Config()
+    well = cfg.well
+    d_gauge = 0.5 * (0.5 * well.gauge_hole_diameter_m - well.casing_outer_radius_m)
+    wall = SinusoidalWall(well.gauge_hole_diameter_m,
+                          cfg.synthetic_wall.amplitude_m,
+                          cfg.synthetic_wall.wavelength_m)
+    fracs = []
+    for e_gauge in (0.1, 0.2, 0.3, 0.4, 0.5):
+        g = Geometry(well, wall, ConstantOffsetEccentricity(e_gauge, d_gauge),
+                     GridConfig(40, 400))
+        e = g.e(g.grid.xi_centres)
+        fracs.append(float(np.min((1 - e) ** 2 / (1 + 1.5 * e ** 2))))
+
+    assert all(a > b for a, b in zip(fracs[:-1], fracs[1:]))   # monotone collapse
+    assert fracs[0] / fracs[-1] > 100                          # >2 orders of magnitude

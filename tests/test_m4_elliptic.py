@@ -219,3 +219,110 @@ def test_axially_varying_wall_preserves_flux():
     c[:, :100] = 1.0
     psi = s.solve(c, Q=1.0)
     assert np.allclose(s.axial_flux(psi), 2.0, atol=1e-9)
+
+
+# ------------------------------------------- eccentric far field (exact) ---
+def eccentric_far_field_velocity(phi, e):
+    """
+    Exact far-field azimuthal velocity profile, DERIVED not transcribed.
+
+    With d/dxi = 0 the elliptic equation collapses to d_phi(a_phi dPsi/dphi) = 0,
+    so a_phi dPsi/dphi is constant.  With a_phi = 1/(2 H^3 I1) and
+    Psi(1) - Psi(0) = 2Q,
+
+        w_bar = Q H^2 I1 / int_0^1 H^3 I1 dphi .
+
+    For a PURE fluid I1 is constant in phi and cancels, leaving
+
+        w_bar = H^2 / int_0^1 H^3 dphi = (1 + e cos pi phi)^2 / (1 + 3 e^2 / 2)
+
+    independent of viscosity.  That independence is a real prediction, not a
+    restatement, and it is asserted below at two very different m.
+    """
+    H = 1.0 + e * np.cos(np.pi * phi)
+    return H ** 2 / (1.0 + 1.5 * e ** 2)
+
+
+@pytest.mark.parametrize("e", [0.01, 0.05, 0.2, 0.5, 0.8])
+@pytest.mark.parametrize("m", [0.2, 5.0])
+def test_m4_t3_eccentric_far_field_profile_is_exact(e, m):
+    """
+    Strong replacement for the O(e) content of M4-T3.
+
+    PF04 (40)-(43) could not be recovered from the PDF (BENCH-02), so instead of
+    transcribing a formula we may have misread, this asserts an eccentric
+    benchmark derived from the model itself -- and it holds to MACHINE
+    PRECISION, not merely to discretisation error, because the far-field
+    problem is one-dimensional and the flux-form discretisation is exact for it.
+    """
+    geo, s = make(beta=0.0, e=e, n_phi=200, n_xi=20, m=m, b=0.0, short=False)
+    psi = s.solve(np.zeros((200, 20)), Q=1.0)
+    _, w = s.velocities(psi)
+    exact = eccentric_far_field_velocity(geo.grid.phi_centres, e)
+    assert np.max(np.abs(w[:, 10] - exact) / exact) < 1e-9
+
+
+def test_far_field_profile_is_viscosity_independent():
+    """The derived prediction: I1 cancels, so two fluids with a 25x consistency
+    ratio must give the SAME far-field profile."""
+    prof = []
+    for m in (0.2, 5.0):
+        geo, s = make(beta=0.0, e=0.6, n_phi=160, n_xi=20, m=m, b=0.0, short=False)
+        psi = s.solve(np.zeros((160, 20)), Q=1.0)
+        prof.append(s.velocities(psi)[1][:, 10])
+    assert np.allclose(prof[0], prof[1], rtol=1e-10)
+
+
+# --------------------------------------------- bottom-hole inflow (Q5) -----
+def test_uniform_inflow_imposes_a_flat_velocity_profile():
+    """
+    B02 Section 3.2's stated alternative to (70).  Guards a regression that was
+    live for one commit: the Dirichlet row was appended AFTER the flux stencil,
+    and because scipy SUMS duplicate (row, col) entries the row became
+    flux + 1 on the diagonal instead of a clean identity, so the prescribed
+    values never landed at all.
+    """
+    geo, s = make(beta=0.0, e=0.5, n_phi=60, n_xi=300, m=0.2, b=10.0, short=False)
+    g = geo.grid
+    c = np.broadcast_to((g.xi_centres < 0.15 * geo.Z)[None, :],
+                        (60, 300)).astype(float)
+    s.inflow = "uniform"
+    psi = s.solve(c, Q=1.0)
+    assert np.allclose(psi[:, 0], 2.0 * s._uniform_inflow_shape, atol=1e-12)
+
+    H0 = geo.H(g.phi_edges, np.array([0.0]))[:, 0]
+    ra0 = float(geo.r_a(np.array([0.0]))[0])
+    w0 = np.gradient(psi[:, 0], g.dphi) / (2.0 * H0 * ra0)
+    assert np.allclose(w0[2:-2], 1.0, atol=5e-3)      # flat, as imposed
+    assert np.allclose(s.axial_flux(psi), 2.0, atol=1e-9)
+
+
+def test_q5_inflow_choice_is_local_to_bottom_hole():
+    """
+    Q5 resolution.  The two conditions differ substantially AT the boundary but
+    the difference decays within ~1.3 m of a 196 m open hole, so the choice is
+    immaterial for K-GEP-1 away from bottom hole.  This matters because B02's
+    own justification (long annulus) is weaker here -- B02's well is 1000 m.
+    """
+    geo, s = make(beta=0.0, e=0.5, n_phi=60, n_xi=300, m=0.2, b=10.0, short=False)
+    g = geo.grid
+    c = np.broadcast_to((g.xi_centres < 0.15 * geo.Z)[None, :],
+                        (60, 300)).astype(float)
+    s.inflow = "no_axial_gradient"
+    psi_ng = s.solve(c, Q=1.0)
+    s.inflow = "uniform"
+    psi_un = s.solve(c, Q=1.0)
+
+    assert not np.allclose(psi_ng, psi_un)            # the option does something
+    dev = np.max(np.abs(psi_ng - psi_un), axis=0)
+    first_small = np.argmax(dev < 0.01 * dev.max())
+    reach_m = float(geo.xi_hat(g.xi_edges[first_small]))
+    assert reach_m < 0.05 * geo.Z_hat                 # local to bottom hole
+
+
+def test_concentration_shape_is_validated():
+    """A (1, n_xi) field used to broadcast into a cryptic failure deep in the
+    assembly.  It must be rejected at the boundary with a useful message."""
+    geo, s = make(n_phi=20, n_xi=40)
+    with pytest.raises(ValueError, match="expected"):
+        s.solve(np.zeros((1, 40)), Q=1.0)
