@@ -63,6 +63,34 @@ DOWNSTREAM side.  (11)/(14) are the correct pair and are what is implemented.
 The check is in tests/test_m5_transport.py::test_num16_azimuthal_upwind_direction.
 
 
+CONV-10 (the r_a in the buoyancy flux).  BF25 (2.21), BF25 (3.3) and BCF25
+(5)+(24) all print the buoyancy flux so that r_a CANCELS: BCF25 writes
+`b H^3 r_a I_3` and then defines b with a 1/r_a in it (24), and BF25 writes
+`-b H^3 I_3 (f_xi, -f_phi)` with the same b (2.12) and f carrying r_a.  That
+contradicts their own definition of the flux.  BF25 (2.20) defines
+
+    q = r_a ( int_0^yi v dy , int_0^yi w dy ),
+
+with an explicit r_a, and (2.20)'s r_a is corroborated twice over: the
+ADVECTIVE term of (2.21) and of BCF25 (5) both carry it, and without it the
+transport equation (2.19) does not reduce to the correct material derivative
+d c/dt + (v/r_a) dc/dphi + w dc/dxi = 0.
+
+The gap-scale integral it multiplies is r_a-free -- the layer profile depends
+only on G and G_b, and G_b = b(-sin beta sin pi phi, cos beta)/... is itself
+r_a-free once (2.12)'s 1/r_a cancels the r_a in f.  I_3 (2.23) is likewise
+built only from gap integrals.  So the buoyancy flux must carry exactly ONE
+factor of r_a, the same as the advective flux:
+
+    q_buoy = r_a H^3 I_3 G_b .
+
+That is what is implemented.  Every published case has r_a = 1, so no result in
+any of the three papers can distinguish the two readings; under a caliper wall
+r_a varies by 65% along K-GEP-1 and they differ by that much.  Same family of
+ambiguity as CONV-04 in the elliptic equation, resolved the same way -- by
+deriving from (2.11)-(2.13) and (2.20) rather than by choosing a paper.
+
+
 NUM-26 (BCF25's wavespeeds are evaluated at the wrong places).  BCF25
 (32)-(35) set the LLF coefficients from the flux-function slopes AT THE TWO
 CELL VALUES on either side of a face.  That is not enough, and the shortfall is
