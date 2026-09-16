@@ -22,11 +22,33 @@ used to validate the augmented Lagrangian solver at M2-T2 -- substituting
 G = chi + tau_Y/H into (53) reproduces (8) term for term.  So the closure
 arrives pre-verified rather than on trust.
 
-CONVENTION WARNING.  B02 and PF04 define the stream function WITHOUT the factor
-of 2 that BF25/ZF22/ZF23 carry (CONV-01): B02 (39) has dPsi/dphi = r_a H w_bar
-where BF25 has 2 H r_a w_bar.  Every |grad Psi| passed to `chi` must therefore
-be the BF25 value HALVED.  `chi_from_bf25_gradient` does that conversion in one
-place so it cannot be forgotten at a call site.
+CONVENTION WARNING 1 -- the factor of 2.  B02 and PF04 define the stream
+function WITHOUT the factor of 2 that BF25/ZF22/ZF23 carry (CONV-01): B02 (39)
+has dPsi/dphi = r_a H w_bar where BF25 has 2 H r_a w_bar.  Every |grad Psi|
+passed to `chi` must therefore be the BF25 value HALVED.
+`chi_from_bf25_gradient` does that conversion in one place so it cannot be
+forgotten at a call site.
+
+CONVENTION WARNING 2 -- the fluids are numbered BACKWARDS (CONV-09).
+
+    PF04 Section 2.2: "Omega_1 for the displacing (LOWER) fluid 1, and Omega_2
+                       for the displaced (UPPER) fluid 2"
+    BF25 Section 2.3: "k = 1 for the DISPLACED fluid and k = 2 for the
+                       DISPLACING fluid"
+
+Exactly opposite.  So PF04's fluid 1 is BF25's fluid 2 and vice versa, and
+every index in (40)-(43) -- including the jump [.]^2_1 and the choice of which
+P and alpha go on which side of z = 0 -- is in PF04's ordering.
+
+This is invisible in the magnitude of (38) at beta = pi/2, because there
+|g(0)| = |b| / (pi |J|) and both signs cancel; it bites only once the two
+fluids are given different properties AND the two sides of the interface are
+compared separately, i.e. exactly in (42)/(43).  Getting it wrong made the O(e)
+comparison disagree by a factor of ~2 that did not converge under refinement.
+
+Every function in THIS module uses PF04's ordering: `fluids[0]` is the
+DISPLACING fluid, `fluids[1]` the DISPLACED one.  Callers holding BF25-ordered
+fluids must swap.
 """
 
 from __future__ import annotations
@@ -130,9 +152,14 @@ def steady_interface_eccentric(phi, e, b, beta, L, fluids):
     """
     PF04 (40).  Interface shape for a mildly eccentric annulus, to O(e).
 
-    `fluids` is ((chi1, dchi1, tau1Y, m1), (chi2, dchi2, tau2Y, m2)) with chi
-    and chi' evaluated at (|grad Psi|, H) = (1, 1), i.e. linearised about the
-    concentric geometry, exactly as PF04 states below (40).
+    `fluids` is ((chi1, dchi1, tau1Y, m1), (chi2, dchi2, tau2Y, m2)) in PF04's
+    ordering -- index 0 is the DISPLACING (lower) fluid, index 1 the DISPLACED
+    (upper) one, the opposite of BF25 (CONV-09).  chi and chi' are evaluated at
+    (|grad Psi|, H) = (1, 1), i.e. linearised about the concentric geometry,
+    exactly as PF04 states below (40).
+
+    `b` is in PF04's sign convention, b = (rho_upper - rho_lower)/St*, which is
+    NEGATIVE for the favourable case -- the opposite sign to BF25's b.
 
     The denominator is the SAME for both terms: [chi_k + tau_kY]^2_1 + b cos(beta),
     where [.]^2_1 is PF04's jump, fluid 2 minus fluid 1.  The first term is (38).
