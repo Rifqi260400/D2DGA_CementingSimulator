@@ -58,11 +58,21 @@ from scipy.optimize import brentq
 
 
 def areal_flux(chi, H, kappa, m, tau_y):
-    """PF04 (8): |grad Psi| as a function of chi.  Monotone increasing in chi."""
+    """
+    PF04 (8): |grad Psi| as a function of chi.  Monotone increasing in chi.
+
+    Written as chi^m times two BOUNDED ratios rather than chi^(m+1)/G^2 times a
+    linear factor.  Algebraically identical, but the printed grouping evaluates
+    0/0 for a yield-stress-free fluid at small chi: G = chi there, and squaring
+    anything below 1e-154 underflows to zero, so chi^(m+1)/G^2 becomes 0/0 =
+    NaN.  The root finder brackets from 1e-300, so this fired on every
+    Newtonian 2DGA solve.  assumptions.md NUM-18.
+    """
     G = chi + tau_y / H
     return (H ** (m + 2) / (kappa ** m * (m + 2))
-            * chi ** (m + 1) / G ** 2
-            * (chi + (m + 2) * tau_y / ((m + 1) * H)))
+            * chi ** m
+            * (chi / G)
+            * ((chi + (m + 2) * tau_y / ((m + 1) * H)) / G))
 
 
 def chi(grad_psi, H, kappa, n, tau_y, xtol=1e-14):

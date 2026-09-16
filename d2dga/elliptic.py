@@ -59,6 +59,27 @@ class ClosureProvider(ABC):
     def q0_I3(self, c, H, umag):
         ...
 
+    def dq0_dI3_dc(self, c, H, umag, h: float = 1e-6):
+        """
+        d q0/d c and d I3/d c, needed for the LLF wavespeeds BCF25 (32)-(35).
+
+        The default is a central difference clipped to [0, 1], with a small
+        safety factor.  The factor matters: LLF monotonicity requires the
+        wavespeed to bound the true slope from ABOVE at the neighbouring cell
+        values, and a difference quotient can sit O(h^2) BELOW it.  Providers
+        with closed-form closures override this with exact derivatives and no
+        safety factor.  assumptions.md NUM-17.
+        """
+        c = np.asarray(c, dtype=float)
+        lo = np.clip(c - h, 0.0, 1.0)
+        hi = np.clip(c + h, 0.0, 1.0)
+        span = np.where(hi > lo, hi - lo, 1.0)
+        q_hi, I_hi = self.q0_I3(hi, H, umag)
+        q_lo, I_lo = self.q0_I3(lo, H, umag)
+        safety = 1.0 + 1e-6
+        return (safety * (q_hi - q_lo) / span,
+                safety * (I_hi - I_lo) / span)
+
     @property
     def is_linear(self) -> bool:
         """True when the closures do not depend on the velocity, so the
@@ -78,6 +99,9 @@ class NewtonianClosures(ClosureProvider):
 
     def q0_I3(self, c, H, umag=None):
         return _newt.q0(c, self.m), _newt.script_I3(c, self.m)
+
+    def dq0_dI3_dc(self, c, H, umag=None, h=None):
+        return _newt.dq0_dc(c, self.m), _newt.dscript_I3_dc(c, self.m)
 
     @property
     def is_linear(self):
@@ -127,6 +151,12 @@ class TwoDGAClosures(ClosureProvider):
         exists to remove (BF25 Section 2.1)."""
         c = np.asarray(c, dtype=float)
         return c, np.zeros_like(c)
+
+    def dq0_dI3_dc(self, c, H, umag=None, h=None):
+        """q0 = c and I3 = 0 identically, so the wavespeeds are exact: the
+        transport reduces to BCF25 (11)-(21), the 2DGA scheme."""
+        c = np.asarray(c, dtype=float)
+        return np.ones_like(c), np.zeros_like(c)
 
 
 class TabulatedClosures(ClosureProvider):
@@ -288,7 +318,16 @@ class StreamFunctionSolver:
         """Unknown ordering: interior phi nodes i = 1..n_phi-1, all xi nodes."""
         return (i - 1) * (self.n_xi + 1) + j
 
-    def assemble(self, a_phi, a_xi, B_phi, B_xi, Q):
+    def assemble_reference(self, a_phi, a_xi, B_phi, B_xi, Q):
+        """
+        Row-by-row assembly.  Kept as the REFERENCE: it is the version that was
+        written first, reviewed line by line against the discretisation, and
+        that every M4 gate was established on.  `assemble` is a vectorised
+        rewrite that must reproduce it bit for bit -- asserted in
+        tests/test_m6_simulation.py -- because the coupled loop reassembles the
+        matrix at every one of ~10^3-10^5 timesteps and a Python loop over
+        n_phi x n_xi cells dominates the runtime.
+        """
         n_i, n_j = self.n_phi - 1, self.n_xi + 1
         n = n_i * n_j
         dphi2, dxi2 = self.dphi ** 2, self.dxi ** 2
@@ -365,6 +404,64 @@ class StreamFunctionSolver:
 
         A = sp.csr_matrix((vals, (rows, cols)), shape=(n, n))
         return A, rhs
+
+    def assemble(self, a_phi, a_xi, B_phi, B_xi, Q):
+        """Vectorised equivalent of `assemble_reference`; see its docstring."""
+        n_phi, n_xi = self.n_phi, self.n_xi
+        n_i, n_j = n_phi - 1, n_xi + 1
+        dphi2, dxi2 = self.dphi ** 2, self.dxi ** 2
+        psi_narrow = 2.0 * Q
+        uniform = self.inflow == "uniform"
+
+        idx = (np.arange(n_i)[:, None] * n_j + np.arange(n_j)[None, :])
+        ii = np.arange(1, n_phi)[:, None] * np.ones((1, n_j), dtype=int)
+        jj = np.ones((n_i, 1), dtype=int) * np.arange(n_j)[None, :]
+
+        ae = a_phi[1:n_phi, :]                       # face between i and i+1
+        aw = a_phi[0:n_phi - 1, :]                   # face between i-1 and i
+        an = np.concatenate([a_xi[1:n_phi, :], np.zeros((n_i, 1))], axis=1)
+        asf = np.concatenate([np.zeros((n_i, 1)), a_xi[1:n_phi, :]], axis=1)
+
+        # ---- right-hand side, in the SAME order as assemble_reference ------
+        rhs = np.zeros((n_i, n_j))
+        rhs[-1, :] -= ae[-1, :] * psi_narrow / dphi2        # narrow-side Dirichlet
+        interior = jj != 0 if uniform else np.ones_like(jj, dtype=bool)
+        dirich = (2.0 * Q * self._uniform_inflow_shape[1:n_phi]
+                  if uniform else None)
+        if uniform:
+            # the j = 1 rows lose their south NEIGHBOUR to the right-hand side
+            # exact same association as assemble_reference, so the two
+            # agree bit for bit rather than to a tolerance
+            rhs[:, 1] -= (asf[:, 1] * 2.0 * Q
+                          * self._uniform_inflow_shape[1:n_phi] / dxi2)
+        rhs -= (B_phi[1:n_phi, :] - B_phi[0:n_phi - 1, :]) / self.dphi
+        bn = np.concatenate([B_xi[1:n_phi, :], B_xi[1:n_phi, n_xi - 1:n_xi]], axis=1)
+        bs_ = np.concatenate([B_xi[1:n_phi, 0:1], B_xi[1:n_phi, :]], axis=1)
+        rhs -= (bn - bs_) / self.dxi
+        if uniform:
+            rhs[:, 0] = dirich
+
+        rows, cols, vals = [], [], []
+
+        def add(mask, col, val):
+            m = mask & interior
+            rows.append(idx[m]); cols.append(col[m]); vals.append(val[m])
+
+        add(np.ones_like(jj, dtype=bool), idx,
+            -(ae + aw) / dphi2 - (an + asf) / dxi2)
+        add(ii + 1 != n_phi, idx + n_j, ae / dphi2)
+        add(ii - 1 != 0, idx - n_j, aw / dphi2)
+        add(jj + 1 <= n_xi, idx + 1, an / dxi2)
+        add(jj - 1 >= 0 if not uniform else jj - 1 >= 1, idx - 1, asf / dxi2)
+
+        if uniform:
+            rows.append(idx[:, 0]); cols.append(idx[:, 0])
+            vals.append(np.ones(n_i))
+
+        A = sp.csr_matrix((np.concatenate(vals),
+                           (np.concatenate(rows), np.concatenate(cols))),
+                          shape=(n_i * n_j, n_i * n_j))
+        return A, rhs.ravel()
 
     # -- solve -----------------------------------------------------------------
     def solve(self, c, Q=1.0, umag_pf=None, umag_xf=None):

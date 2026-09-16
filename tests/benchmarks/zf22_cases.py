@@ -72,3 +72,52 @@ def build_scaling(case: ZF22Case):
         delta_star=DELTA_STAR,
         mean_velocity=case.w0,
     )
+
+
+def build_geometry(case: ZF22Case, n_phi: int, n_xi: int):
+    """
+    ZF22 apparatus as a Geometry.
+
+    The WellConfig fields are named for K-GEP-1, but they carry exactly the
+    three numbers a uniform annulus needs: casing OD, hole diameter and the
+    open-hole interval.  Nothing K-GEP-1-specific leaks in -- the wall is a
+    UniformWall and the eccentricity is constant, which is ZF22's apparatus.
+    """
+    from d2dga.config import GridConfig, WellConfig
+    from d2dga.geometry import (ConstantEccentricity, Geometry, UniformWall)
+
+    well = WellConfig(casing_od_m=2 * R_I_HAT,
+                      gauge_hole_diameter_m=2 * R_O_HAT,
+                      casing_shoe_m=ANNULUS_LENGTH,
+                      total_depth_m=2 * ANNULUS_LENGTH,
+                      inclination_rad=0.0)
+    return Geometry(well, UniformWall(2 * R_O_HAT),
+                    ConstantEccentricity(case.e), GridConfig(n_phi, n_xi))
+
+
+def build_simulation(case: ZF22Case, n_phi=20, n_xi=400, cfl=0.5):
+    """
+    ZF22 case -> Simulation, with the buoyancy number converted.
+
+    CONV-02.  ZF22's b and BF25's b are NOT the same number:
+    b_BF25 = b_ZF22 * sqrt(m).  Table 2's printed b is ZF22's, so it is
+    converted here and the conversion is asserted in
+    tests/test_m6_simulation.py against the dimensional route through
+    `build_scaling`.
+
+    Fr* is set to 1 and Delta_rho to -b_BF25, which reproduces the required
+    buoyancy number exactly (b = -Delta_rho / Fr*^2).  The leftover 1/Fr*^2 term
+    in BF25 (2.18) is immaterial here: it multiplies f, and for a vertical
+    uniform annulus div_a . f = 0 identically (docs/derivation.md Finding 1),
+    which is also BF25's own stated reason for dropping it.
+    """
+    from d2dga.elliptic import NewtonianClosures
+    from d2dga.scaling import zf22_buoyancy_to_bf25
+    from d2dga.simulation import Simulation
+
+    geo = build_geometry(case, n_phi, n_xi)
+    b = zf22_buoyancy_to_bf25(case.b, case.m)
+    sim = Simulation(geo, NewtonianClosures(case.m),
+                     froude=1.0, delta_rho=-b, cfl=cfl,
+                     inflow_concentration=1.0)
+    return geo, sim, b

@@ -96,18 +96,39 @@ def script_I3(c, m):
 
 # -- derivatives, needed for LLF wavespeeds (BCF25 32-35) and for the
 #    kinematic-wave front speed (BF25 3.8) -------------------------------
-def dq0_dc(c, m, h=1e-6):
+#
+# These are ANALYTIC, not finite-differenced.  The LLF monotonicity argument
+# needs the wavespeed to bound |dq0/dc| from ABOVE at the neighbouring cell
+# values; a finite difference can fall below the true slope by O(h^2) and
+# would turn the discrete maximum principle into an approximate one.  Both
+# functions are rational in c, so exact differentiation is cheap.
+#
+#   q0 = N / D,   N = (m - 3/2) c^3 + (3/2) c ,       D = (m - 1) c^3 + 1
+#   I3 = P / (12 sqrt(m) D),
+#                 P = c^2 (1-c)^3 [ (4m - 3) c + 3 ]
+
+def dq0_dc(c, m):
+    """d q0 / d c.  Analytic; equals 3/2 at c = 0 for m = 1, the Poiseuille
+    centreline speed that sets the leading edge of a dispersive front."""
     c = np.asarray(c, dtype=float)
-    lo = np.clip(c - h, 0.0, 1.0)
-    hi = np.clip(c + h, 0.0, 1.0)
-    return (q0(hi, m) - q0(lo, m)) / (hi - lo)
+    D = _denominator(c, m)
+    N = (m - 1.5) * c ** 3 + 1.5 * c
+    dN = 3.0 * (m - 1.5) * c ** 2 + 1.5
+    dD = 3.0 * (m - 1.0) * c ** 2
+    return (dN * D - N * dD) / D ** 2
 
 
-def dscript_I3_dc(c, m, h=1e-6):
+def dscript_I3_dc(c, m):
+    """d I3 / d c.  Analytic, MASTER form."""
     c = np.asarray(c, dtype=float)
-    lo = np.clip(c - h, 0.0, 1.0)
-    hi = np.clip(c + h, 0.0, 1.0)
-    return (script_I3(hi, m) - script_I3(lo, m)) / (hi - lo)
+    D = _denominator(c, m)
+    dD = 3.0 * (m - 1.0) * c ** 2
+    lin = (4.0 * m - 3.0) * c + 3.0
+    P = c ** 2 * (1.0 - c) ** 3 * lin
+    dP = (2.0 * c * (1.0 - c) ** 3 * lin
+          - 3.0 * c ** 2 * (1.0 - c) ** 2 * lin
+          + c ** 2 * (1.0 - c) ** 3 * (4.0 * m - 3.0))
+    return (dP * D - P * dD) / (12.0 * np.sqrt(m) * D ** 2)
 
 
 # -- other papers' forms, kept ONLY so the conversions can be tested -------
