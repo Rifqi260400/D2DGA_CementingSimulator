@@ -326,3 +326,49 @@ def test_concentration_shape_is_validated():
     geo, s = make(n_phi=20, n_xi=40)
     with pytest.raises(ValueError, match="expected"):
         s.solve(np.zeros((1, 40)), Q=1.0)
+
+
+# ----------------------------------- PF04 (38) against PF04's own figures ---
+@pytest.mark.parametrize("beta_name,beta,expected", [
+    ("0    (Fig. 3)", 0.0, 0.0),
+    ("pi/2 (Fig. 5)", np.pi / 2, 0.42),
+])
+def test_bench01_derived_pf04_38_reproduces_the_published_figures(beta_name, beta,
+                                                                  expected):
+    """
+    Quantitative check of BENCH-01 against PF04's OWN published results.
+
+    PF04 (38) could not be transcribed from the PDF, so it was re-derived
+    (test_m4_t2_derivation_matches_pf04).  That established the STRUCTURE.
+    This test closes the loop on the NUMBERS, using PF04's Figs 3 and 5, whose
+    captions state the full parameter set.
+
+    Fig. 3 (beta = 0): PF04's text says the steady state is "perpendicular to
+    the z-axis", i.e. flat.  The derived formula carries a factor sin(beta) and
+    gives exactly zero.
+
+    Fig. 5 (beta = pi/2): the convergence panel shows g(0, t) and g(1, t)
+    settling at -+0.42.  The derived formula gives 0.411 -- agreement to about
+    2%, which is the precision of reading a value off a printed plot.
+
+    Evaluating it needs PF04's 2DGA closure chi, since J = [chi_k(1)+tau_kY]^2_1
+    there plays the role D2DGA gives to [1/I1_k]^2_1.
+    """
+    from tests.benchmarks.pf04_analytic import pf04_figure_jump_and_b
+    J, b = pf04_figure_jump_and_b()
+    phi = np.array([0.0])
+    g0 = abs(float(concentric_steady_interface(phi, b, beta, 0.0, J)[0]))
+    if expected == 0.0:
+        assert g0 == 0.0
+    else:
+        assert abs(g0 - expected) < 0.02, f"{beta_name}: got {g0:.4f}"
+
+
+def test_bench01_pf04_parameters_are_density_unstable():
+    """Sanity on the parameter set: PF04's Figs 3-5 use rho2 < rho1, so b < 0 --
+    a lighter fluid displacing a heavier one.  Getting this sign wrong flips
+    the interface and would still 'match' a symmetric plot."""
+    from tests.benchmarks.pf04_analytic import pf04_figure_jump_and_b
+    J, b = pf04_figure_jump_and_b()
+    assert b < 0
+    assert J < 0        # fluid 2 is the more mobile of the two here

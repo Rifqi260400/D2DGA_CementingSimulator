@@ -59,3 +59,38 @@ def newtonian_inverse_mobilities(m):
     c = 1 gives I1 = m^(1/2)/3 (displacing fluid alone).
     """
     return 3.0 * np.sqrt(m), 3.0 / np.sqrt(m)
+
+
+# ---------------------------------------------------------------------------
+# PF04's own 2DGA closure, needed to evaluate (38) with PF04's parameters
+# ---------------------------------------------------------------------------
+def chi_at_unit_flux(kappa, m, tau_y):
+    """
+    Invert PF04 (8) / B02 (57) at |grad Psi| = 1, H = 1:
+
+        1 = chi^(m+1) [chi + (m+2) tau_Y/(m+1)]
+            / ( kappa^m (m+2) (chi + tau_Y)^2 )
+
+    chi + tau_Y is then the modified pressure gradient carrying unit areal flow
+    through a unit half-gap -- PF04's counterpart of the D2DGA 1/I1.  Note m
+    here is PF04's INVERSE power-law index, m = 1/n.
+    """
+    from scipy.optimize import brentq
+    def residual(c):
+        return (c ** (m + 1) * (c + (m + 2) * tau_y / (m + 1))
+                / (kappa ** m * (m + 2) * (c + tau_y) ** 2) - 1.0)
+    return brentq(residual, 1e-12, 1e4, xtol=1e-14, rtol=1e-15)
+
+
+# PF04 Figs 3-5 parameter set (stated in their captions)
+PF04_FIG_PARAMS = dict(e=0.0, St=0.1, rho1=1.0, rho2=0.9,
+                       tau1Y=0.9, tau2Y=0.7, kappa1=0.5, kappa2=0.4,
+                       m1=1.0, m2=1.2)
+
+
+def pf04_figure_jump_and_b():
+    """(J, b) for the PF04 Fig. 3-5 parameter set, in PF04's own convention."""
+    p = PF04_FIG_PARAMS
+    g1 = chi_at_unit_flux(p["kappa1"], p["m1"], p["tau1Y"]) + p["tau1Y"]
+    g2 = chi_at_unit_flux(p["kappa2"], p["m2"], p["tau2Y"]) + p["tau2Y"]
+    return g2 - g1, (p["rho2"] - p["rho1"]) / p["St"]
