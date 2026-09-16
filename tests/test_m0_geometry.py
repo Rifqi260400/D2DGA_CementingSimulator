@@ -1,5 +1,7 @@
 """M0 test gates -- geometry."""
 
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -186,9 +188,11 @@ def test_m0_t6_caliper_log_reproduces_uniform_wall():
     assert np.allclose(cal.outer_radius(probe), uni.outer_radius(probe), atol=1e-15)
 
 
-def test_m0_caliper_parsers_are_explicit_stubs():
-    for fn in (CaliperLogWall.from_las, CaliperLogWall.from_csv,
-               CaliperLogWall.from_two_column):
+def test_m0_remaining_caliper_parsers_are_explicit_stubs():
+    """from_las is implemented (the K-GEP-1 log is LAS 2.0).  The other two
+    stay stubbed: no such file has been supplied, so delimiter, units and depth
+    convention are unknown and must not be guessed."""
+    for fn in (CaliperLogWall.from_csv, CaliperLogWall.from_two_column):
         with pytest.raises(NotImplementedError, match="stubbed"):
             fn("nonexistent.file")
 
@@ -272,3 +276,95 @@ def test_geo02_standoff_dominates_narrow_side_velocity():
 
     assert all(a > b for a, b in zip(fracs[:-1], fracs[1:]))   # monotone collapse
     assert fracs[0] / fracs[-1] > 100                          # >2 orders of magnitude
+
+
+# --------------------------------------------- measured caliper (K-GEP-1) ---
+LAS_PATH = pathlib.Path(__file__).resolve().parents[1] / "data" / "K-GEP-01_2024-03-30.las"
+pytestmark_las = pytest.mark.skipif(not LAS_PATH.exists(), reason="caliper log absent")
+
+
+@pytest.fixture(scope="module")
+def caliper_wall():
+    if not LAS_PATH.exists():
+        pytest.skip("caliper log absent")
+    rep = {}
+    w = CaliperLogWall.from_las(LAS_PATH, total_depth_m=390.0, top_m=194.0,
+                                bottom_m=386.7, min_diameter_m=7.2 * 0.0254,
+                                resample_m=0.25, report=rep)
+    return w, rep
+
+
+def test_caliper_las_parses_and_reports(caliper_wall):
+    w, rep = caliper_wall
+    assert rep["n_raw"] == 39076
+    assert rep["n_null"] == 199
+    assert rep["n_used"] > 19000
+    lo, hi = rep["diameter_range_m"]
+    assert 8.0 * 0.0254 < lo < 9.0 * 0.0254         # gauge-ish minimum
+    assert 23.0 * 0.0254 < hi < 24.1 * 0.0254       # washout, near the tool ceiling
+
+
+def test_caliper_depth_convention_is_inverted(caliper_wall):
+    """LAS depth runs DOWN from ground level; xi_hat runs UP from bottom hole.
+    The shallowest logged point must map to the LARGEST xi_hat."""
+    w, rep = caliper_wall
+    lo, hi = rep["xi_hat_range_m"]
+    assert lo >= 0.0 and hi <= 196.0
+    shallow = w.outer_radius(np.array([hi]))       # near the casing shoe
+    deep = w.outer_radius(np.array([lo]))          # near TD
+    assert np.isfinite(shallow) and np.isfinite(deep)
+
+
+def test_caliper_rejects_the_bottom_hole_tool_artefact():
+    """K-GEP-1 has one contiguous 3.2 m run at 386.76-389.95 m falling to
+    0.77 in -- the caliper arms closing at TD, not a 2 cm borehole.  Including
+    the interval must flag it; samples are DROPPED, not clamped, because they
+    carry no geometric information."""
+    if not LAS_PATH.exists():
+        pytest.skip("caliper log absent")
+    rep = {}
+    CaliperLogWall.from_las(LAS_PATH, total_depth_m=390.0, top_m=194.0,
+                            bottom_m=390.0, min_diameter_m=7.2 * 0.0254,
+                            resample_m=0.25, report=rep)
+    assert rep["n_below_min"] > 300
+    lo, hi = rep["below_min_span_m"]
+    assert 386.0 < lo < 387.0 and 389.0 < hi < 390.0
+
+
+def test_caliper_geometry_is_admissible(caliper_wall):
+    """The measured wall must produce a usable annulus: positive gap, e < 1,
+    and volume consistent between the direct and gap-averaged routes."""
+    w, _ = caliper_wall
+    cfg = Config()
+    well = cfg.well
+    d_gauge = 0.5 * (0.5 * well.gauge_hole_diameter_m - well.casing_outer_radius_m)
+    g = Geometry(well, w, ConstantOffsetEccentricity(0.3, d_gauge), GridConfig(20, 400))
+    xi = np.linspace(0, g.Z, 2000)
+    assert np.all(g.H(np.linspace(0, 1, 40), xi) > 0)
+    assert g.e_max < 1.0
+    vd, vh = g.annulus_volume_direct(), g.annulus_volume_from_H()
+    assert abs(vh - vd) / vd < 1e-3
+
+
+def test_caliper_is_far_rougher_than_the_synthetic_wall(caliper_wall):
+    """
+    The headline geometric result.  On the computational grid the measured wall
+    is an order of magnitude more demanding than the synthetic case the model
+    was developed against, which is what the validity envelope exists to show.
+    """
+    w, _ = caliper_wall
+    cfg = Config()
+    well = cfg.well
+    d_gauge = 0.5 * (0.5 * well.gauge_hole_diameter_m - well.casing_outer_radius_m)
+    ecc = ConstantOffsetEccentricity(0.3, d_gauge)
+    real = Geometry(well, w, ecc, GridConfig(20, 400))
+    syn = Geometry(well, SinusoidalWall(well.gauge_hole_diameter_m,
+                                        cfg.synthetic_wall.amplitude_m,
+                                        cfg.synthetic_wall.wavelength_m),
+                   ecc, GridConfig(20, 400))
+    xr = np.linspace(0, real.Z, 4000)
+    xs = np.linspace(0, syn.Z, 4000)
+    assert np.abs(real.wall_gradient(xr)).max() > 20 * np.abs(syn.wall_gradient(xs)).max()
+    assert real.narrow_gap_parameter(xr).max() > 2 * syn.narrow_gap_parameter(xs).max()
+    # and almost the whole well sits outside ZF23's validated regime
+    assert (real.narrow_gap_parameter(xr) > 0.038).mean() > 0.9

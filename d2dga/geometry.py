@@ -177,19 +177,105 @@ class CaliperLogWall(WallProfile):
     def from_arrays(cls, xi_hat_m, outer_diameter_m, source="<arrays>"):
         return cls(xi_hat_m, outer_diameter_m, source)
 
-    # -- parsers: stubs until the real file is in hand ----------------------
+    # -- parsers ------------------------------------------------------------
     @classmethod
-    def from_las(cls, path, curve=None, total_depth_m=None):
-        raise NotImplementedError(
-            "LAS parser stubbed: the K-GEP-1 log has not been supplied. "
-            "Needs the caliper curve mnemonic, its unit (in vs mm), the depth "
-            "reference, and the null value. Route to from_arrays once known.")
+    def from_las(cls, path, total_depth_m, curve="BOREHOLE_DIAMETER",
+                 depth_curve="DEPT", unit="in", top_m=None, bottom_m=None,
+                 min_diameter_m=None, resample_m=None, report=None):
+        """
+        Read a caliper from a LAS file.
+
+        Written against the actual K-GEP-1 file (LAS 2.0, WRAP=YES, curve
+        BOREHOLE_DIAMETER in INCH, DEPT in m below ground level, step 0.01 m,
+        NULL -99999).  Nothing about the format is guessed: `unit` and the
+        curve names are explicit arguments.
+
+        Depth convention.  LAS depth is measured DOWN from ground level; the
+        model's xi_hat is measured UP from bottom hole, so
+        ``xi_hat = total_depth_m - depth``.  `total_depth_m` is required rather
+        than inferred, because the deepest logged sample is not necessarily TD.
+
+        `min_diameter_m` rejects physically impossible readings.  On K-GEP-1 a
+        single contiguous 3.2 m run at the very bottom (386.76-389.95 m) falls
+        to 0.77 in, which is the caliper arms closing at TD, not a 2 cm
+        borehole.  Samples below the threshold are dropped, not clamped: they
+        carry no geometric information.
+
+        `resample_m` block-averages the DIAMETER onto a uniform grid.  The raw
+        log is 0.01 m while a 400-cell axial grid over K-GEP-1 is 0.48 m/cell,
+        so some averaging is unavoidable; doing it here, explicitly, beats
+        letting the interpolator do it silently at an arbitrary phase.
+        """
+        import lasio
+
+        las = lasio.read(str(path))
+        depth = np.asarray(las[depth_curve], dtype=float)
+        diam = np.asarray(las[curve], dtype=float)
+
+        scale = {"in": 0.0254, "inch": 0.0254, "m": 1.0, "mm": 1e-3}[unit.lower()]
+        diam = diam * scale
+
+        stats = {"n_raw": int(diam.size)}
+        good = np.isfinite(depth) & np.isfinite(diam)
+        stats["n_null"] = int((~good).sum())
+
+        if top_m is not None:
+            good &= depth >= top_m
+        if bottom_m is not None:
+            good &= depth <= bottom_m
+        stats["n_in_interval"] = int(good.sum())
+
+        if min_diameter_m is not None:
+            too_small = good & (diam < min_diameter_m)
+            stats["n_below_min"] = int(too_small.sum())
+            if too_small.any():
+                stats["below_min_span_m"] = (float(depth[too_small].min()),
+                                             float(depth[too_small].max()))
+            good &= ~too_small
+        stats["n_used"] = int(good.sum())
+        if stats["n_used"] < 2:
+            raise GeometryError(
+                f"caliper: only {stats['n_used']} usable samples in "
+                f"[{top_m}, {bottom_m}] -- check the depth interval and units")
+
+        depth, diam = depth[good], diam[good]
+
+        # tool ceiling: values pinned at the maximum are lower bounds only
+        ceiling = diam.max()
+        stats["n_at_ceiling"] = int(np.sum(np.isclose(diam, ceiling, rtol=0, atol=1e-9)))
+        stats["ceiling_m"] = float(ceiling)
+
+        xi_hat = total_depth_m - depth
+        order = np.argsort(xi_hat)
+        xi_hat, diam = xi_hat[order], diam[order]
+
+        if resample_m:
+            n = max(2, int(round((xi_hat[-1] - xi_hat[0]) / resample_m)))
+            edges = np.linspace(xi_hat[0], xi_hat[-1], n + 1)
+            idx = np.clip(np.digitize(xi_hat, edges) - 1, 0, n - 1)
+            centres, means = [], []
+            for i in range(n):
+                sel = idx == i
+                if sel.any():
+                    centres.append(0.5 * (edges[i] + edges[i + 1]))
+                    means.append(diam[sel].mean())
+            xi_hat, diam = np.asarray(centres), np.asarray(means)
+            stats["n_resampled"] = int(xi_hat.size)
+            stats["resample_m"] = float(resample_m)
+
+        stats["diameter_range_m"] = (float(diam.min()), float(diam.max()))
+        stats["xi_hat_range_m"] = (float(xi_hat.min()), float(xi_hat.max()))
+        if report is not None:
+            report.update(stats)
+        obj = cls(xi_hat, diam, source=str(path))
+        obj.stats = stats
+        return obj
 
     @classmethod
     def from_csv(cls, path, depth_col=None, diameter_col=None, total_depth_m=None):
         raise NotImplementedError(
             "CSV parser stubbed: column names, units and depth convention "
-            "unknown until the file is inspected. Route to from_arrays.")
+            "unknown until such a file is supplied. Route to from_arrays.")
 
     @classmethod
     def from_two_column(cls, path, total_depth_m=None):
@@ -206,6 +292,8 @@ class CaliperLogWall(WallProfile):
 
     def describe(self):
         return f"CaliperLogWall(n={self._xi.size}, source={self.source})"
+
+    stats: dict = {}
 
 
 # ===========================================================================
