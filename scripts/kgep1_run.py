@@ -98,6 +98,8 @@ def main():
     ap.add_argument("--n-xi", type=int, default=150)
     ap.add_argument("--cfl", type=float, default=0.5)
     ap.add_argument("--volumes", type=float, default=1.2)
+    ap.add_argument("--no-resume", action="store_true",
+                    help="delete any existing checkpoint and start over")
     ap.add_argument("--n-c", type=int, default=31)
     ap.add_argument("--n-h", type=int, default=9)
     ap.add_argument("--inflow", default="no_axial_gradient",
@@ -109,6 +111,10 @@ def main():
 
     cfg = Config(grid=GridConfig(args.n_phi, args.n_xi))
     geo = make_geometry(cfg, args.wall)
+    if args.no_resume:
+        for f in os.listdir("output"):
+            if f.startswith("kgep1_ckpt_"):
+                os.remove(os.path.join("output", f))
     mud, cement = cfg.fluids.as_fluids()
     sc = Scaling(mud, cement, r_a_hat_star=geo.r_a_hat_star,
                  delta_star=geo.delta_star, mean_velocity=args.w0)
@@ -154,7 +160,11 @@ def main():
                   f"  static={rep.static_cells}", flush=True)
 
     t0 = time.time()
-    res = sim.run(t_end=t_end, record_every=1, on_step=on_step)
+    ckpt = os.path.join("output", f"kgep1_ckpt_{args.wall}_{args.inflow}_"
+                                  f"{args.n_phi}x{args.n_xi}_w{args.w0}_"
+                                  f"v{args.volumes}.npz")
+    res = sim.run(t_end=t_end, record_every=1, on_step=on_step,
+                  checkpoint_path=ckpt)
     wall = time.time() - t0
 
     print(f"\n{res.reports[-1].n} steps, {wall:.0f} s, "

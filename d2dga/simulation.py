@@ -187,9 +187,19 @@ class Simulation:
 
     # ------------------------------------------------------------------
     def run(self, t_end, c0=None, max_steps=2_000_000,
-            breakthrough_threshold=0.01, on_step=None, record_every=1):
+            breakthrough_threshold=0.01, on_step=None, record_every=1,
+            checkpoint_path=None, checkpoint_every=180.0):
         """
         Advance to t_end.
+
+        checkpoint_path : if given, the run state is written there periodically
+            and, if the file already exists and matches this grid, the run
+            RESUMES from it.  A full K-GEP-1 job is ~10^5 steps and several
+            hours, and this environment reclaims its container on its own
+            schedule -- three runs were lost that way at 22%, 22% and 2%.
+            Checkpointing turns that from lost work into a relaunch.  The grid
+            shape is verified on load, so a checkpoint from a different mesh is
+            a loud failure rather than a silent wrong answer.
 
         breakthrough_threshold : ZF22 defines breakthrough as the time the
             displacing fluid "first exits the annulus", which is exact for a
@@ -198,6 +208,9 @@ class Simulation:
             choice.  It is exposed here and its sensitivity is reported rather
             than buried.  assumptions.md NUM-21.
         """
+        import os
+        import time as _time
+
         c = self.initial_condition() if c0 is None else np.array(c0, dtype=float)
         t, n = 0.0, 0
         times, effs, outlet, reports = [0.0], [self.transport.mass(c) / self._capacity], \
@@ -206,6 +219,48 @@ class Simulation:
         cons_err = 0.0
         t_br = np.nan
         psi = None
+
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            z = np.load(checkpoint_path)
+            saved = z["c"]
+            if saved.shape != c.shape:
+                raise ValueError(
+                    f"checkpoint {checkpoint_path} holds a {saved.shape} field "
+                    f"but this run is {c.shape}; delete it or use another path")
+            c = saved
+            t = float(z["t"])
+            n = int(z["n"])
+            mass_running = float(z["mass_running"])
+            cons_err = float(z["cons_err"])
+            t_br = float(z["t_br"])
+            times = list(z["times"])
+            effs = list(z["effs"])
+            outlet = list(z["outlet"])
+            self.n_picard_unconverged = int(z["n_picard_unconverged"])
+            self.worst_picard_residual = float(z["worst_picard_residual"])
+            print(f"resumed from {checkpoint_path}: step {n}, t/Z = "
+                  f"{t / self.geom.grid.Z:.4f}", flush=True)
+
+        def _save():
+            # Write through a file OBJECT: np.savez_compressed appends ".npz"
+            # to a path that lacks it, so a "...npz.tmp" name would silently
+            # become "...npz.tmp.npz" and the rename would miss it.
+            tmp = checkpoint_path + ".tmp"
+            with open(tmp, "wb") as fh:
+                _write(fh)
+            # rename is atomic, so a reclaim mid-write cannot leave a truncated
+            # checkpoint behind
+            os.replace(tmp, checkpoint_path)
+
+        def _write(fh):
+            np.savez_compressed(
+                fh, c=c, t=t, n=n, mass_running=mass_running,
+                cons_err=cons_err, t_br=t_br, times=np.array(times),
+                effs=np.array(effs), outlet=np.array(outlet),
+                n_picard_unconverged=self.n_picard_unconverged,
+                worst_picard_residual=self.worst_picard_residual)
+
+        last_save = _time.time()
 
         prev_t, prev_out = 0.0, outlet[0]
         while t < t_end and n < max_steps:
@@ -245,6 +300,13 @@ class Simulation:
                 reports.append(rep)
                 if on_step is not None:
                     on_step(rep, c, psi)
+
+            if checkpoint_path and _time.time() - last_save > checkpoint_every:
+                _save()
+                last_save = _time.time()
+
+        if checkpoint_path:
+            _save()
 
         return RunResult(times=np.array(times), efficiency=np.array(effs),
                          outlet_concentration=np.array(outlet),

@@ -303,3 +303,48 @@ def test_m6_t1_lajeunesse_critical_viscosity_ratio():
         s = riemann_structure(m, 0.0, n=200001)["main_shock"][2]
         assert lo <= s <= hi, (m, s)
     assert riemann_structure(5.0, 0.0, n=200001)["main_shock"][2] > 1.6
+
+
+def test_checkpoint_round_trips_exactly(tmp_path):
+    """
+    A run must be resumable, because this environment reclaims its container on
+    its own schedule and a full K-GEP-1 job is several hours -- three runs were
+    lost that way at 22%, 22% and 2% before checkpointing existed.
+
+    Two properties have to be separated or the test measures the wrong one:
+
+      * the checkpoint must round-trip EXACTLY -- what comes back is bitwise
+        what went in;
+      * a resumed run CANNOT be bitwise equal to an uninterrupted one, because
+        stopping at t1 forces a step boundary there and the time integration is
+        first order, so the two take different step SEQUENCES.  The honest
+        comparison is against a restart that takes the same sequence without a
+        checkpoint, and the residual against a continuous run is O(dt).
+    """
+    Z = build(n_phi=12, n_xi=60, e=0.4, m=0.4, b=10.0)[0].grid.Z
+
+    geo, sim = build(n_phi=12, n_xi=60, e=0.4, m=0.4, b=10.0)
+    cont = sim.run(t_end=0.30 * Z, record_every=10_000)
+
+    geo, sim = build(n_phi=12, n_xi=60, e=0.4, m=0.4, b=10.0)
+    half = sim.run(t_end=0.15 * Z, record_every=10_000)
+    geo, sim = build(n_phi=12, n_xi=60, e=0.4, m=0.4, b=10.0)
+    # `run` always starts its clock at 0, so continuing for another 0.15 Z is
+    # t_end = 0.15 Z with the half-way field as the initial condition
+    split = sim.run(t_end=0.15 * Z, c0=half.concentration, record_every=10_000)
+
+    path = str(tmp_path / "ckpt.npz")
+    geo, sim = build(n_phi=12, n_xi=60, e=0.4, m=0.4, b=10.0)
+    sim.run(t_end=0.15 * Z, record_every=10_000, checkpoint_path=path,
+            checkpoint_every=0.0)
+    geo, sim = build(n_phi=12, n_xi=60, e=0.4, m=0.4, b=10.0)
+    res = sim.run(t_end=0.30 * Z, record_every=10_000, checkpoint_path=path,
+                  checkpoint_every=0.0)
+
+    assert np.max(np.abs(res.concentration - split.concentration)) == 0.0
+    assert np.max(np.abs(split.concentration - cont.concentration)) < 1e-3
+
+    # a checkpoint from a different mesh must fail loudly, not be interpolated
+    geo, other = build(n_phi=12, n_xi=40, e=0.4, m=0.4, b=10.0)
+    with pytest.raises(ValueError, match="checkpoint"):
+        other.run(t_end=0.01 * Z, checkpoint_path=path)

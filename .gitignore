@@ -5,3 +5,4 @@ __pycache__/
 output/*.log
 output/closure_table_*.npz
 scratch/
+output/kgep1_ckpt_*.npz
