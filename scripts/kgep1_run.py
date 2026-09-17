@@ -182,9 +182,14 @@ def main():
     # something already looks wrong.
     capacity = float(np.sum(cell_volume(geo)))
     pumped = args.volumes * g.Z / capacity          # Q = 1, so volume = t
+    tb = res.breakthrough_at(0.01) / g.Z
+    note = ("expected negative: displacing fluid has been leaving through the "
+            f"outlet since t/Z = {tb:.3f}" if np.isfinite(tb) and tb < args.volumes
+            else "no breakthrough, so this must be <= 0 up to the startup "
+                 "transient")
     print(f"volume balance: pumped {pumped:.4f}, present {eta:.4f}, "
           f"difference {eta - pumped:+.5f} "
-          f"({100 * (eta - pumped) / args.volumes:+.2f}% of the job)")
+          f"({100 * (eta - pumped) / args.volumes:+.2f}% of the job) -- {note}")
     print(f"narrow-side minimum c_bar = "
           f"{float(np.min(narrow_side_profile(geo, res.concentration))):.4f}")
     print(f"residual (c_bar < 0.5) volume fraction = "
