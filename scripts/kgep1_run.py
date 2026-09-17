@@ -187,6 +187,9 @@ def main():
     else:
         print("ZF23: no pre-breakthrough state captured")
     print(f"NUM-13 mobility floor: max static cells over the run = {static[0]}")
+    print(f"Picard: {sim.n_picard_unconverged} steps hit the iteration cap, "
+          f"worst residual {sim.worst_picard_residual:.2e} "
+          f"(tolerance {sim.picard_tol:.0e})")
     if static[0]:
         print("   ^ non-zero: the regularisation is load-bearing here, and "
               "PF04 section 5 warns it flatters mud removal.")

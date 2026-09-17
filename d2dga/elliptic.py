@@ -558,7 +558,7 @@ class StreamFunctionSolver:
         return psi
 
     def solve_nonlinear(self, c, Q=1.0, tol=1e-10, max_iter=100, relax=1.0,
-                        psi0=None):
+                        psi0=None, relax_min=0.05):
         """
         Picard iteration for velocity-dependent (non-Newtonian) closures.
 
@@ -574,6 +574,7 @@ class StreamFunctionSolver:
             return self.solve(c, Q), 1, 0.0
         psi = self.solve(c, Q) if psi0 is None else np.asarray(psi0, dtype=float)
         err = np.inf
+        prev = np.inf
         for it in range(1, max_iter + 1):
             u_pf, u_xf = self.speed_on_faces(psi)
             new = self.solve(c, Q, umag_pf=u_pf, umag_xf=u_xf)
@@ -583,6 +584,15 @@ class StreamFunctionSolver:
             psi = new
             if err < tol:
                 return psi, it, err
+            # Adaptive under-relaxation.  The Picard gain grows with the
+            # buoyancy source, so on a strongly buoyant run the iteration count
+            # creeps up as the front develops -- measured on K-GEP-1 it went
+            # 4 -> 26 over the first 15% of the run and was heading for the
+            # iteration cap, which would have killed the run after hours.
+            # Halving the step whenever the residual stops falling bounds it.
+            if err >= prev:
+                relax = max(0.5 * relax, relax_min)
+            prev = err
         return psi, max_iter, err
 
     # -- reconstruction ---------------------------------------------------------

@@ -139,6 +139,8 @@ class Simulation:
         self.picard_max_iter = picard_max_iter
         self.picard_warm_start = bool(picard_warm_start)
         self._psi_prev = None
+        self.n_picard_unconverged = 0
+        self.worst_picard_residual = 0.0
 
         # total pore volume of the (half) annulus, for the efficiency metric
         self._capacity = self.transport.mass(np.ones(
@@ -162,9 +164,14 @@ class Simulation:
             psi0=self._psi_prev if self.picard_warm_start else None)
         self._psi_prev = psi
         if err > self.picard_tol and iters >= self.picard_max_iter:
-            raise RuntimeError(
-                f"Picard iteration did not converge: {iters} iterations, "
-                f"residual {err:.3e} > {self.picard_tol:.3e}")
+            # Do NOT abort the run.  A single under-converged elliptic solve
+            # perturbs Psi by O(err), which the next step largely corrects;
+            # throwing away hours of a 10^5-step run over it is far worse.  But
+            # it must not pass silently either, so count it and report the
+            # worst residual -- `run` prints both, and a non-zero count means
+            # the result needs looking at rather than quoting.
+            self.n_picard_unconverged += 1
+            self.worst_picard_residual = max(self.worst_picard_residual, err)
         return psi, iters
 
     # ------------------------------------------------------------------
