@@ -91,6 +91,33 @@ ambiguity as CONV-04 in the elliptic equation, resolved the same way -- by
 deriving from (2.11)-(2.13) and (2.20) rather than by choosing a paper.
 
 
+NUM-29 (the LLF flux must not be used at the inflow boundary).  Applying the
+interior flux at xi = 0 through a ghost cell -- the obvious thing, and what
+this code did first -- puts the artificial term -alpha (c_R - c_L) on a face
+where there is no second cell for it to redistribute to.  In the interior that
+term is a conservative diffusion; at a Dirichlet inflow it is a pure SOURCE,
+and its size is set by the LLF wavespeed, not by anything physical.
+
+Measured on the K-GEP-1 fluids at t = 0, decomposing the inflow face:
+
+    volumetric flow      1.0000   (= Q, the elliptic BC is right)
+    advective flux       0.5000
+    buoyancy flux        0.0000
+    LLF dissipation    110.1255   <-- artificial
+    total              110.6255
+
+so the annulus was being filled with displacing fluid at 110 times the rate it
+was being pumped in.  It shows up as a displacement efficiency that exceeds the
+volume pumped: eta = 0.034 after 0.009 of a volume.
+
+The inflow face now carries the physical flux instead: pure upwinding, the
+buoyancy term at the boundary state, and no dissipation.  Summed over phi that
+delivers exactly Q c_in.  The published cases are much less affected -- their
+alpha is ~2.4 rather than 110 -- which is why the ZF22 comparison still came out
+within 2.5%; the defect scales with the buoyancy wavespeed, and on this fluid
+pair that is 10^3 times the mean flow (FLU-06).
+
+
 NUM-26 (BCF25's wavespeeds are evaluated at the wrong places).  BCF25
 (32)-(35) set the LLF coefficients from the flux-function slopes AT THE TWO
 CELL VALUES on either side of a face.  That is not enough, and the shortfall is
@@ -168,7 +195,8 @@ class TransportSolver:
                  buoyancy_number: float = 0.0,
                  inflow_concentration: float = 1.0,
                  cfl: float = 0.5,
-                 wavespeed: str = "interval"):
+                 wavespeed: str = "interval",
+                 inlet_flux: str = "upwind"):
         if wavespeed not in ("interval", "endpoints"):
             raise ValueError("wavespeed must be 'interval' or 'endpoints'")
         if not 0.0 < cfl <= 1.0:
@@ -185,6 +213,15 @@ class TransportSolver:
         # monotone -- see NUM-26 in the module docstring -- and is retained
         # only so the failure can be demonstrated against the fix.
         self.wavespeed = wavespeed
+        # NUM-29.  "llf" applies the interior LLF flux at the inflow face too,
+        # which is what a ghost-cell treatment does and what this code did
+        # first.  It is wrong at a BOUNDARY: the -alpha (c_R - c_L) term is a
+        # conservative redistribution between two cells in the interior, but at
+        # a Dirichlet inflow there is no second cell and it becomes a pure
+        # SOURCE.  Kept only so the size of the error can be shown.
+        if inlet_flux not in ("upwind", "llf"):
+            raise ValueError("inlet_flux must be 'upwind' or 'llf'")
+        self.inlet_flux = inlet_flux
 
         g = geometry.grid
         self.n_phi, self.n_xi = g.n_phi, g.n_xi
@@ -359,6 +396,30 @@ class TransportSolver:
         a_xi = b_q + b_b
 
         Xi = adv_x + buoy_x - 0.5 * a_xi * (cN - cS)
+
+        if self.inlet_flux == "upwind":
+            # Physical inflow condition: fluid enters at the imposed rate with
+            # the prescribed concentration, and there is no gap-scale exchange
+            # with the inside of the casing, where only one fluid is present.
+            # So: pure upwinding, the buoyancy flux at the BOUNDARY state, and
+            # no artificial dissipation.  Summed over phi this delivers exactly
+            # Q c_in, which is the whole point -- the LLF form delivered 110 Q
+            # on the K-GEP-1 fluids (NUM-29).
+            dpsi0 = dpsi_phi[:, 0]
+            c_up = np.where(dpsi0 > 0.0, self.c_in, c[:, 0])
+            u0 = None if umag is None else np.asarray(umag, dtype=float)[:, 0]
+            q0_up, _ = self.closures.q0_I3(c_up, self.H_c[:, 0], u0)
+            _, I3_b = self.closures.q0_I3(
+                np.full(c.shape[0], self.c_in), self.H_c[:, 0], u0)
+            Xi[:, 0] = (0.5 * np.broadcast_to(q0_up, dpsi0.shape) * dpsi0
+                        + self.dphi * self.k_xi[:, 0] * I3_b)
+            # The only remaining sensitivity to the interior cell is through
+            # the outflow branch; bound it with twice the advective wavespeed
+            # so the CFL condition still covers it, and drop the buoyancy
+            # wavespeed, which no longer enters this face at all.
+            a_xi = a_xi.copy()
+            a_xi[:, 0] = 2.0 * b_q[:, 0]
+
         return Phi, Xi, a_phi, a_xi
 
     # ------------------------------------------------------------------

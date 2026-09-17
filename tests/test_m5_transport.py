@@ -549,3 +549,73 @@ def test_q7_initial_interface_shape_is_immaterial():
     ratios = [diffs[i] / diffs[i + 1] for i in range(len(diffs) - 1)]
     assert all(r > 1.8 for r in ratios), ratios
     assert diffs[-1] < 1e-3
+
+
+# =========================================================================
+# NUM-29 -- the LLF flux must not be used at the inflow boundary
+# =========================================================================
+def test_num29_inflow_face_delivers_exactly_the_pumped_flux():
+    """
+    NUM-29.  Applying the interior LLF flux at xi = 0 through a ghost cell puts
+    the artificial term -alpha (c_R - c_L) on a face with no second cell to
+    redistribute to.  In the interior that term is a conservative diffusion; at
+    a Dirichlet inflow it is a pure SOURCE, sized by the LLF wavespeed rather
+    than by anything physical.
+
+    The invariant it breaks is simple and checkable: the displacing fluid must
+    enter at exactly Q c_in.  Assert that, and assert that the ghost-cell
+    version does not -- on a strongly buoyant case, because the error scales
+    with the buoyancy wavespeed.  On the K-GEP-1 fluids, where that wavespeed
+    is ~10^3 times the mean flow, the inflow face carried 110 Q.
+    """
+    for b in (0.0, 100.0):
+        geo, ell, tr = build(n_phi=16, n_xi=60, m=0.2, b=b, c_in=1.0)
+        c = np.zeros((16, 60))                      # all displaced fluid
+        psi = ell.solve(c, Q=0.8)
+        _, Xi, _, _ = tr.fluxes(c, psi)
+        assert float(np.sum(Xi[:, 0])) == pytest.approx(0.8, rel=1e-12), b
+
+    # the ghost-cell form over-delivers, and worse the more buoyant the case
+    over = {}
+    for b in (0.0, 100.0):
+        geo, ell, tr = build(n_phi=16, n_xi=60, m=0.2, b=b, c_in=1.0)
+        tr = TransportSolver(geo, tr.closures, buoyancy_number=b,
+                             inflow_concentration=1.0, cfl=0.5,
+                             inlet_flux="llf")
+        c = np.zeros((16, 60))
+        psi = ell.solve(c, Q=0.8)
+        _, Xi, _, _ = tr.fluxes(c, psi)
+        over[b] = float(np.sum(Xi[:, 0])) / 0.8
+    # Even with no buoyancy the ghost-cell form over-delivers (1.25x here,
+    # from the advective wavespeed alone).  What makes it fatal rather than
+    # untidy is that it scales with the LLF wavespeed, so strong buoyancy
+    # multiplies it.
+    assert over[0.0] > 1.1, over
+    assert over[100.0] > 3.0 * over[0.0], over
+
+    # and it shows up exactly where it matters: more displacing fluid present
+    # than has been pumped
+    geo, ell, tr = build(n_phi=16, n_xi=60, m=0.2, b=100.0, c_in=1.0)
+    bad = TransportSolver(geo, tr.closures, buoyancy_number=100.0,
+                          inflow_concentration=1.0, cfl=0.5, inlet_flux="llf")
+    cap = tr.mass(np.ones((16, 60)))
+    for solver, expect_physical in ((tr, True), (bad, False)):
+        c = np.zeros((16, 60))
+        t = 0.0
+        for _ in range(60):
+            psi = ell.solve(c, Q=1.0)
+            c, dt, _ = solver.step(c, psi)
+            t += dt
+        pumped = t / geo.grid.Z
+        present = solver.mass(c) / cap
+        if expect_physical:
+            # the invariant: before breakthrough, what is in the annulus cannot
+            # exceed what has been pumped
+            assert present <= pumped * (1.0 + 1e-9), (present, pumped)
+        else:
+            # the ghost-cell form breaks it.  The excess here is 18% after 60
+            # steps and decays once the inlet cell fills, which is why it went
+            # unnoticed on the published cases -- their alpha is small.  On the
+            # K-GEP-1 fluids the same mechanism gave eta = 0.034 against 0.009
+            # of a volume pumped.
+            assert present > pumped * 1.05, (present, pumped)
