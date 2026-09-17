@@ -100,6 +100,11 @@ def main():
     ap.add_argument("--volumes", type=float, default=1.2)
     ap.add_argument("--n-c", type=int, default=31)
     ap.add_argument("--n-h", type=int, default=9)
+    ap.add_argument("--inflow", default="no_axial_gradient",
+                    choices=("no_axial_gradient", "uniform"),
+                    help="bottom-hole condition, assumptions.md NUM-04.  B02 "
+                         "(70) permits backflow through the shoe; a real shoe "
+                         "does not, which is what 'uniform' forbids.")
     args = ap.parse_args()
 
     cfg = Config(grid=GridConfig(args.n_phi, args.n_xi))
@@ -109,6 +114,7 @@ def main():
                  delta_star=geo.delta_star, mean_velocity=args.w0)
     g = geo.grid
     H = geo.H(g.phi_centres, g.xi_centres)
+    print(f"inflow={args.inflow}")
     print(f"wall={args.wall}  Z={g.Z:.1f}  dxi={g.dxi:.3f}  "
           f"H in [{H.min():.3f}, {H.max():.3f}]  "
           f"r_a in [{geo.r_a(g.xi_centres).min():.3f}, "
@@ -123,7 +129,8 @@ def main():
           f"{tab.n_failed} unconverged, {secs:.0f} s", flush=True)
 
     sim = Simulation(geo, TabulatedClosures(tab, gb=sc.buoyancy_number),
-                     froude=sc.Fr_star, delta_rho=sc.delta_rho, cfl=args.cfl)
+                     froude=sc.Fr_star, delta_rho=sc.delta_rho, cfl=args.cfl,
+                     inflow=args.inflow)
     t_end = args.volumes * g.Z
     static = [0]
     last = [time.time()]
