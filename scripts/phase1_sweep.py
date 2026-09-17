@@ -78,7 +78,26 @@ def run_one(cfg, amplitude_m, wavelength_m, mode, m, b, n_phi, n_xi, cfl,
                      cfl=cfl, inflow_concentration=1.0)
     Z = geo.grid.Z
     t0 = time.time()
-    res = sim.run(t_end=volumes * Z, record_every=1)
+
+    # ZF23's dispersion metrics are read off w_f(c_bar), which is recovered by
+    # inverting the axial profile.  That only works while the whole front is
+    # still INSIDE the domain: once the fast part has left through the outlet,
+    # the profile is truncated, w_f <= 1 everywhere and sigma_w+r comes out
+    # identically zero -- which is an artefact of the sampling time, not a
+    # non-dispersive flow.  So snapshot the last state before the tip reaches
+    # the outlet and compute the metrics from that.
+    snap = {"c": None, "t": None}
+    _SAMPLE_COL = int(0.8 * geo.grid.n_xi)
+
+    def on_step(rep, c, psi):
+        # Sample while the tip is still well inside the domain -- at 80% of it.
+        # Waiting until the tip reaches the OUTLET clips the w_r+ tail exactly
+        # where it is largest, because that tail lives at small c_bar, right at
+        # the front of the profile.
+        if float(np.max(c[:, _SAMPLE_COL])) < 1e-3:
+            snap["c"], snap["t"] = c.copy(), rep.t
+
+    res = sim.run(t_end=volumes * Z, record_every=1, on_step=on_step)
     return dict(
         skipped=None, Z=Z, delta_pi=delta_pi, wall_gradient=grad,
         e_min=float(np.min(geo.e(xi))), e_max=float(np.max(geo.e(xi))),
@@ -87,7 +106,9 @@ def run_one(cfg, amplitude_m, wavelength_m, mode, m, b, n_phi, n_xi, cfl,
         t_br={th: res.breakthrough_at(th) / Z for th in THRESHOLDS},
         narrow_min=float(np.min(narrow_side_profile(geo, res.concentration))),
         residual=residual_fraction(geo, res.concentration),
-        zf23=zf23_metrics(geo, res.concentration, res.times[-1]),
+        zf23=(zf23_metrics(geo, snap["c"], snap["t"])
+              if snap["c"] is not None and snap["t"] > 0 else None),
+        zf23_time=None if snap["t"] is None else snap["t"] / Z,
         cons=res.conservation_error,
     )
 
@@ -131,9 +152,11 @@ def main():
             print(f"    eta_E={r['eta']:.4f}  t_br "
                   + "  ".join(f"@{th}={r['t_br'][th]:.3f}" for th in THRESHOLDS)
                   + f"  narrow_min={r['narrow_min']:.3f}  residual={r['residual']:.4f}")
-            print(f"    ZF23 sigma+={r['zf23'].sigma_plus:.4f} "
-                  f"|w+|={r['zf23'].area_plus:.4f} "
-                  f"dispersive={r['zf23'].is_dispersive}   "
+            z = r["zf23"]
+            zs = ("n/a" if z is None else
+                  f"sigma+={z.sigma_plus:.4f} |w+|={z.area_plus:.4f} "
+                  f"dispersive={z.is_dispersive} @t/Z={r['zf23_time']:.3f}")
+            print(f"    ZF23 {zs}   "
                   f"{r['steps']} steps, {r['wall']:.0f}s, cons {r['cons']:.1e}")
 
     lines = [
@@ -146,7 +169,10 @@ def main():
         "`delta/pi` and `|dr_o/dxi|` are the Hele-Shaw validity diagnostics and",
         "come FIRST on purpose: a case that displaces well while failing them is",
         "a warning, not a result. `t_br` is quoted at three outlet thresholds",
-        "(assumptions.md NUM-21).",
+        "(assumptions.md NUM-21).  The ZF23 dispersion metrics are evaluated while",
+        "the tip is still at 80% of the domain: after breakthrough the axial",
+        "profile is truncated and sigma_w+r collapses to zero, and sampling right",
+        "at the outlet clips the w_r+ tail exactly where it is largest.",
         "",
         "| A (in) | L (m) | delta/pi | \\|dr/dxi\\| | e range | eta_E | t_br@0.01 | @0.1 | @0.5 | narrow min | residual | sigma_w+r | dispersive |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
@@ -162,7 +188,8 @@ def main():
             f"{r['wall_gradient']:.4f} | {r['e_min']:.2f}–{r['e_max']:.2f} | "
             f"{r['eta']:.4f} | {t[0.01]:.3f} | {t[0.1]:.3f} | {t[0.5]:.3f} | "
             f"{r['narrow_min']:.3f} | {r['residual']:.4f} | "
-            f"{r['zf23'].sigma_plus:.4f} | {r['zf23'].is_dispersive} |")
+            + ("— | — |" if r["zf23"] is None else
+               f"{r['zf23'].sigma_plus:.4f} | {r['zf23'].is_dispersive} |"))
     with open(args.out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print(f"\nwritten {args.out}")

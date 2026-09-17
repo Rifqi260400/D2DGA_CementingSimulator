@@ -130,7 +130,10 @@ class FluidsConfig:
          consequence is m ~ 0.003-0.011 on K-GEP-1: the displacing fluid comes
          out 100-360 times more viscous than the displaced one, which is an
          unusually FAVOURABLE viscosity ratio.  Any displacement efficiency
-         computed from this pair is optimistic.
+         computed from this pair is optimistic.  This was raised with the user
+         and re-affirmed on 2026-09-17: the mud is to be treated as water-like.
+         Results stand, with the caveat attached -- they describe a WATER
+         displacement and bound from above what a real mud would give.
       2. Its cement is denser than its "mud" (1200 vs 998), so b > 0 -- a
          favourable, stabilising density difference -- and b lands at 26-29 on
          K-GEP-1, comparable to ZF22's strongly buoyant cases 2/5/9.

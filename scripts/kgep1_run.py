@@ -118,9 +118,19 @@ def main():
     t_end = args.volumes * g.Z
     static = [0]
     last = [time.time()]
+    # see scripts/phase1_sweep.py: the ZF23 metrics only mean anything while the
+    # whole front is still inside the domain
+    snap = {"c": None, "t": None}
+    _SAMPLE_COL = int(0.8 * geo.grid.n_xi)
 
     def on_step(rep, c, psi):
         static[0] = max(static[0], rep.static_cells)
+        # Sample while the tip is still well inside the domain -- at 80% of it.
+        # Waiting until the tip reaches the OUTLET clips the w_r+ tail exactly
+        # where it is largest, because that tail lives at small c_bar, right at
+        # the front of the profile.
+        if float(np.max(c[:, _SAMPLE_COL])) < 1e-3:
+            snap["c"], snap["t"] = c.copy(), rep.t
         if time.time() - last[0] > 120:
             last[0] = time.time()
             print(f"   t/Z={rep.t / g.Z:.3f}  eta={rep.efficiency:.4f}  "
@@ -142,9 +152,13 @@ def main():
           f"{float(np.min(narrow_side_profile(geo, res.concentration))):.4f}")
     print(f"residual (c_bar < 0.5) volume fraction = "
           f"{residual_fraction(geo, res.concentration):.4f}")
-    m = zf23_metrics(geo, res.concentration, res.times[-1])
-    print(f"ZF23  sigma_w+r={m.sigma_plus:.4f}  |w_r+|={m.area_plus:.4f}  "
-          f"dispersive={m.is_dispersive}")
+    if snap["c"] is not None and snap["t"] > 0:
+        m = zf23_metrics(geo, snap["c"], snap["t"])
+        print(f"ZF23 (at t/Z={snap['t'] / g.Z:.3f}, before breakthrough)  "
+              f"sigma_w+r={m.sigma_plus:.4f}  |w_r+|={m.area_plus:.4f}  "
+              f"dispersive={m.is_dispersive}")
+    else:
+        print("ZF23: no pre-breakthrough state captured")
     print(f"NUM-13 mobility floor: max static cells over the run = {static[0]}")
     if static[0]:
         print("   ^ non-zero: the regularisation is load-bearing here, and "
