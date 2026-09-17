@@ -60,15 +60,24 @@ def make_table(sc, geo, n_c, n_h, cache_dir="output"):
     g = geo.grid
     H = geo.H(g.phi_centres, g.xi_centres)
     h_lo, h_hi = 0.9 * float(H.min()), 1.1 * float(H.max())
+    # The velocity axis has to reach far beyond O(1).  With b*I1 ~ 1500 on this
+    # fluid pair (FLU-06) any azimuthal tilt of the front drives |u| into the
+    # hundreds, so a linear axis to 4 -- ample for the published cases -- is off
+    # the end within the first timesteps.  Geometric, to 3000.
+    umag_grid = np.concatenate([[0.02], np.geomspace(0.1, 3000.0, 15)])
+    # the key covers EVERY axis: `load` verifies them and raises on a mismatch,
+    # but a key that ignored one would turn that loud signal into a routine
+    # failure the first time an axis was tuned
     key = hashlib.sha1(
         repr((sc.scaled_fluid1, sc.scaled_fluid2, sc.buoyancy_number,
-              n_c, n_h, round(h_lo, 6), round(h_hi, 6))).encode()).hexdigest()[:12]
+              n_c, n_h, round(h_lo, 6), round(h_hi, 6),
+              np.round(umag_grid, 6).tolist())).encode()).hexdigest()[:12]
     path = os.path.join(cache_dir, f"closure_table_{key}.npz")
 
     tab = ClosureTable(sc.scaled_fluid1, sc.scaled_fluid2,
                        c_grid=np.linspace(0.0, 1.0, n_c),
                        h_grid=np.linspace(h_lo, h_hi, n_h),
-                       umag_grid=np.array([0.02, 0.25, 0.5, 1.0, 2.0, 4.0]),
+                       umag_grid=umag_grid,
                        gb_grid=np.array([sc.buoyancy_number]),
                        n_y=200, tol=1e-9)
     if os.path.exists(path):
