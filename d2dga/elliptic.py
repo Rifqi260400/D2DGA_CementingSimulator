@@ -261,6 +261,14 @@ class TabulatedClosures(ClosureProvider):
         _, _, q0, I3 = self.table(c, H=H, umag=self._umag(umag, c), gb=self.gb)
         return q0, I3
 
+    def dq0_dI3_dc(self, c, H, umag=None, h=None):
+        """Upper bounds on the two c-derivatives, straight from the table's own
+        piecewise-linear structure rather than by finite-differencing it.  See
+        ClosureTable._build_derivative_bounds: a bound is what the LLF
+        wavespeeds need, and this costs one interpolation instead of eight."""
+        return self.table.derivative_bounds(c, H=H, umag=self._umag(umag, c),
+                                            gb=self.gb)
+
     def wavespeed_nodes(self):
         """The table's own c nodes.  Between them the interpolant is linear, so
         its derivative is piecewise constant and the endpoints of each segment
@@ -549,11 +557,22 @@ class StreamFunctionSolver:
         psi[1:-1, :] = x.reshape(self.n_phi - 1, self.n_xi + 1)
         return psi
 
-    def solve_nonlinear(self, c, Q=1.0, tol=1e-10, max_iter=100, relax=1.0):
-        """Picard iteration for velocity-dependent (non-Newtonian) closures."""
+    def solve_nonlinear(self, c, Q=1.0, tol=1e-10, max_iter=100, relax=1.0,
+                        psi0=None):
+        """
+        Picard iteration for velocity-dependent (non-Newtonian) closures.
+
+        `psi0` seeds the iteration.  In a time loop the previous step's Psi is
+        an excellent seed -- c moves by at most one CFL-limited step -- and
+        BF25 A.2.3 suggests exactly this continuation.  Measured on the K-GEP-1
+        Herschel-Bulkley pair: from a cold start the residual falls only
+        linearly and 40 iterations reach 1.8e-5; warm-started it converges in a
+        handful.  Over the ~10^5 steps of a full run that is the difference
+        between hours and days.
+        """
         if self.closures.is_linear:
             return self.solve(c, Q), 1, 0.0
-        psi = self.solve(c, Q)
+        psi = self.solve(c, Q) if psi0 is None else np.asarray(psi0, dtype=float)
         err = np.inf
         for it in range(1, max_iter + 1):
             u_pf, u_xf = self.speed_on_faces(psi)

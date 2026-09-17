@@ -119,8 +119,9 @@ class Simulation:
                  inflow_concentration: float = 1.0,
                  inflow: str = "no_axial_gradient",
                  mobility_floor: float = 1e-12,
-                 picard_tol: float = 1e-10,
-                 picard_max_iter: int = 100):
+                 picard_tol: float = 1e-8,
+                 picard_max_iter: int = 100,
+                 picard_warm_start: bool = True):
         self.geom = geometry
         self.closures = closures
         self.buoyancy_number = -float(delta_rho) / float(froude) ** 2
@@ -131,8 +132,13 @@ class Simulation:
             geometry, closures, buoyancy_number=self.buoyancy_number,
             inflow_concentration=inflow_concentration, cfl=cfl)
         self.flow_rate = flow_rate
+        # 1e-10 is far tighter than the time discretisation warrants: the
+        # transport step is first order in dt, so driving the elliptic residual
+        # to machine-ish precision every step buys nothing and costs iterations.
         self.picard_tol = picard_tol
         self.picard_max_iter = picard_max_iter
+        self.picard_warm_start = bool(picard_warm_start)
+        self._psi_prev = None
 
         # total pore volume of the (half) annulus, for the efficiency metric
         self._capacity = self.transport.mass(np.ones(
@@ -152,7 +158,9 @@ class Simulation:
         if self.closures.is_linear:
             return self.elliptic.solve(c, Q), 1
         psi, iters, err = self.elliptic.solve_nonlinear(
-            c, Q, tol=self.picard_tol, max_iter=self.picard_max_iter)
+            c, Q, tol=self.picard_tol, max_iter=self.picard_max_iter,
+            psi0=self._psi_prev if self.picard_warm_start else None)
+        self._psi_prev = psi
         if err > self.picard_tol and iters >= self.picard_max_iter:
             raise RuntimeError(
                 f"Picard iteration did not converge: {iters} iterations, "

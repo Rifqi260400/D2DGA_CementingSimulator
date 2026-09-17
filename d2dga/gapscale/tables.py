@@ -132,6 +132,7 @@ class ClosureTable:
                   f"r = {self.tuned_r:g}")
 
         self._values = out
+        self._dinterp = None
         pts = tuple(a for _, a in self._axes)
         self._interp = {
             k: RegularGridInterpolator(pts, v, method="linear",
@@ -196,6 +197,7 @@ class ClosureTable:
         self._values = {k: z[f"val_{k}"] for k in ("I1", "I2", "q0", "I3")}
         self.tuned_r = float(z["tuned_r"])
         self.n_failed = int(z["n_failed"])
+        self._dinterp = None
         pts = tuple(a for _, a in self._axes)
         self._interp = {
             k: RegularGridInterpolator(pts, v, method="linear",
@@ -203,6 +205,53 @@ class ClosureTable:
             for k, v in self._values.items()
         }
         return self
+
+    # -- c-derivative bounds --------------------------------------------------
+    def _build_derivative_bounds(self):
+        """
+        Interpolators for an UPPER BOUND on |dq0/dc| and |dI3/dc|.
+
+        The table is linear in c, so the interpolant's derivative is the
+        segment slope -- piecewise constant and discontinuous at the nodes.
+        At node k we store max(|slope_{k-1}|, |slope_k|), the larger of the two
+        adjacent slopes.  Linearly interpolating THAT still bounds the true
+        slope everywhere: inside segment k both endpoint values are >= |slope_k|
+        by construction, so any convex combination of them is too.  A bound is
+        exactly what the LLF monotonicity argument needs (NUM-26), and this one
+        costs a single interpolation instead of the two four-quantity calls a
+        finite difference of q0_I3 would take -- which measured at 244 ms per
+        transport step against 48 ms for the whole elliptic Picard sequence.
+        """
+        c_axis = self._axes[0][1]
+        if c_axis.size < 2:
+            self._dinterp = None
+            return
+        dc = np.diff(c_axis).reshape((-1,) + (1,) * 3)
+        out = {}
+        for key in ("q0", "I3"):
+            v = self._values[key]
+            slope = np.abs(np.diff(v, axis=0) / dc)          # (n_c-1, ...)
+            bound = np.empty_like(v)
+            bound[0] = slope[0]
+            bound[-1] = slope[-1]
+            bound[1:-1] = np.maximum(slope[:-1], slope[1:])
+            out[key] = bound
+        pts = tuple(a for _, a in self._axes)
+        self._dinterp = {
+            k: RegularGridInterpolator(pts, v, method="linear",
+                                       bounds_error=False, fill_value=None)
+            for k, v in out.items()
+        }
+
+    def derivative_bounds(self, c, H=1.0, umag=1.0, gb=0.0):
+        """Upper bounds on |dq0/dc| and |dI3/dc|; see `_build_derivative_bounds`."""
+        if getattr(self, "_dinterp", None) is None:
+            self._build_derivative_bounds()
+        c, H, umag, gb = np.broadcast_arrays(*[np.asarray(x, float)
+                                               for x in (c, H, umag, gb)])
+        pts = np.stack([c.ravel(), H.ravel(), umag.ravel(), gb.ravel()], axis=-1)
+        return (np.abs(self._dinterp["q0"](pts)).reshape(c.shape),
+                np.abs(self._dinterp["I3"](pts)).reshape(c.shape))
 
     # -- evaluate -------------------------------------------------------------
     def __call__(self, c, H=1.0, umag=1.0, gb=0.0, warn_out_of_range=True):

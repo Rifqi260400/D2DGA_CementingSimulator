@@ -4,3 +4,4 @@ __pycache__/
 .ipynb_checkpoints/
 output/*.log
 output/closure_table_*.npz
+scratch/
