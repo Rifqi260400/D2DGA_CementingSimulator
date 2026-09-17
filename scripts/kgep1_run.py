@@ -36,7 +36,7 @@ from d2dga.config import Config, GridConfig, IN_TO_M          # noqa: E402
 from d2dga.elliptic import TabulatedClosures                   # noqa: E402
 from d2dga.gapscale.tables import ClosureTable                 # noqa: E402
 from d2dga.geometry import CaliperLogWall, build_geometry      # noqa: E402
-from d2dga.postprocess import (displacement_efficiency,        # noqa: E402
+from d2dga.postprocess import (cell_volume, displacement_efficiency,  # noqa: E402
                                narrow_side_profile, residual_fraction,
                                zf23_metrics)
 from d2dga.scaling import Scaling                              # noqa: E402
@@ -155,8 +155,19 @@ def main():
           f"c in [{res.concentration.min():.4f}, {res.concentration.max():.4f}]")
     print("t_br  " + "  ".join(
         f"@{th}={res.breakthrough_at(th) / g.Z:.4f}" for th in THRESHOLDS))
-    print(f"eta_E (at {args.volumes} volumes) = "
-          f"{displacement_efficiency(geo, res.concentration):.4f}")
+    eta = displacement_efficiency(geo, res.concentration)
+    print(f"eta_E (at {args.volumes} volumes) = {eta:.4f}")
+
+    # Volume balance.  Before breakthrough what is in the annulus cannot exceed
+    # what was pumped; after it, it cannot exceed it either.  This is the check
+    # that caught NUM-29 -- the inflow face was delivering 110 Q -- and it is
+    # cheap, so it is printed on every run rather than done by hand when
+    # something already looks wrong.
+    capacity = float(np.sum(cell_volume(geo)))
+    pumped = args.volumes * g.Z / capacity          # Q = 1, so volume = t
+    print(f"volume balance: pumped {pumped:.4f}, present {eta:.4f}, "
+          f"difference {eta - pumped:+.5f} "
+          f"({100 * (eta - pumped) / args.volumes:+.2f}% of the job)")
     print(f"narrow-side minimum c_bar = "
           f"{float(np.min(narrow_side_profile(geo, res.concentration))):.4f}")
     print(f"residual (c_bar < 0.5) volume fraction = "
