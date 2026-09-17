@@ -104,6 +104,44 @@ Status key — **Conflict**: sources disagree, a choice was forced.
 
 ---
 
+## Measured caliper vs synthetic wall — what the real hole costs
+
+First end-to-end run of the `--wall caliper` path (16 × 80, K-GEP-1 fluids,
+`ŵ₀ = 0.2 m/s`).  It works — axial flux `2Q` to 1e-9, `c̄ ∈ [0, 1]`, no static
+cells — and it is a much harder problem than the synthetic wall:
+
+| | synthetic (A = 1.5 in, L = 20 m) | **measured caliper** |
+|---|---|---|
+| `Z` | 564.1 | 524.8 |
+| `H` range | 0.263 – 1.758 (×6.7) | **0.054 – 3.747 (×70)** |
+| `r_a` range | 0.913 – 1.085 (19%) | **0.815 – 1.583 (94%)** |
+| `e` range | 0.21 – 0.54 | **0.065 – 0.814** |
+| `δ/π` max | 0.083 | **0.168** |
+| `\|dr_o/dξ\|` max | 0.012 | **0.163** |
+| `b` | 27.9 | 37.4 |
+| CFL-limited `Δt` | 5.8e-3 | **7.7e-4** |
+
+Three consequences, all of which have to be said before any caliper number is
+quoted:
+
+* **CONV-04 and CONV-10 are load-bearing here and only here.** `r_a` varies by
+  94% along the real hole against 19% on the synthetic one and 0% in every
+  published case. The two `r_a` ambiguities in BF25/BCF25 — which cancel in the
+  elliptic source and survive in the transport flux — were derived rather than
+  pattern-matched precisely because this geometry can tell them apart.
+* **The validity envelope is strained.** `δ/π = 0.168` and a wall slope of
+  0.163 are both an order of magnitude beyond the published cases, and the
+  Hele-Shaw reduction assumes both are small. The caliper result is a
+  *prediction under a stated assumption*, not a converged answer, and M0's
+  validity-envelope plot (`output/caliper_validity_envelope.png`) is the figure
+  that says where.
+* **It costs ~7× the synthetic run.** `Δt` falls by 7.5× because the buoyancy
+  wavespeed scales with `H³` and `H_max³` is 52 against 5.4. A full 1.2-volume
+  caliper run is ~16 h at 16 × 80 — beyond a single container window even with
+  checkpointing, so it needs either a coarser mesh or several resumes.
+
+---
+
 ## Coupled loop (M6)
 
 | ID | Choice | Value used | Source status | Justification | Sensitivity tested? |
