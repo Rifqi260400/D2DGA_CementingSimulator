@@ -197,6 +197,33 @@ def test_b6_record_every_zero_means_endpoints_only():
     assert np.allclose(res.concentration, ref.concentration, rtol=0, atol=0)
 
 
+def test_r1_breakthrough_does_not_depend_on_the_logging_frequency():
+    """
+    R-1, found during remediation, not in the audit.
+
+    `RunResult.breakthrough_at` and `efficiency_at` interpolate the RECORDED
+    history, and `record_every` used to sub-sample that history -- so a reported
+    physical quantity depended on an output setting.  Measured on ZF22 case 1
+    while re-running it: t_br@0.01 = 0.0409 at record_every = 200 against 0.0537
+    at record_every = 1, a 31% difference from a logging option.
+
+    `run`'s own running detector already guarded against exactly this (its
+    comment: "would make t_br depend on the output frequency"); the accessor did
+    not.  Against the old code this test fails.
+    """
+    out = {}
+    for every in (1, 7, 50, 0):
+        geo, sim = build(n_phi=8, n_xi=60, e=0.4, b=8.0, m=0.5)
+        res = sim.run(t_end=1.0 * geo.grid.Z, record_every=every)
+        out[every] = (res.breakthrough_at(0.01) / geo.grid.Z,
+                      res.breakthrough_at(0.5) / geo.grid.Z,
+                      res.efficiency[-1])
+    ref = out[1]
+    assert np.isfinite(ref[0]) and ref[0] > 0.0
+    for every, got in out.items():
+        assert got == pytest.approx(ref, rel=0, abs=0), (every, got, ref)
+
+
 def test_b3_interval_wavespeed_is_the_default():
     """
     B-3.  transport.py's docstring and assumptions.md NUM-17 both stated that

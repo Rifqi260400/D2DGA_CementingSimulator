@@ -287,14 +287,25 @@ class Simulation:
                 else:
                     t_br = t
 
-            # B-6: record_every = 0 is the natural way to ask for "endpoints
-            # only", and it used to raise ZeroDivisionError here.  Zero (or
-            # None) now means exactly that: no intermediate samples, but the
-            # final state is always recorded, so `reports[-1]` is never empty.
+            # R-1.  The scalar history is recorded on EVERY step, whatever
+            # `record_every` says.  `RunResult.breakthrough_at` and
+            # `efficiency_at` interpolate this history, so sub-sampling it made
+            # a reported physical quantity depend on a logging setting: on ZF22
+            # case 1, t_br@0.01 came out 0.0409 at record_every = 200 against
+            # 0.0537 at record_every = 1 -- a 31% difference from an output
+            # option.  `run`'s own running t_br detector already avoided this
+            # (see the comment above: "would make t_br depend on the output
+            # frequency"); `breakthrough_at` did not.  Three floats per step is
+            # ~2 MB over a 10^5-step run, which is not worth the ambiguity.
+            times.append(t)
+            effs.append(m / self._capacity)
+            outlet.append(out)
+
+            # `record_every` now governs only the EXPENSIVE part: the
+            # StepReport list and the on_step callback, which sees the whole
+            # concentration field.  B-6: record_every = 0 is the natural way to
+            # ask for "endpoints only" and used to raise ZeroDivisionError.
             if (record_every and n % record_every == 0) or t >= t_end:
-                times.append(t)
-                effs.append(m / self._capacity)
-                outlet.append(out)
                 rep = StepReport(n=n, t=t, dt=dt, Q=Q, mass=m,
                                  efficiency=m / self._capacity,
                                  boundary_flux=bflux,
