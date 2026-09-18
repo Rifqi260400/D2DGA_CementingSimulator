@@ -228,25 +228,37 @@ comparison … threshold-free, unlike `t_br`".
 **New: which mesh direction drives it.** BENCH-09 refined both together, so it
 could not say. Refining one at a time (this session):
 
-| `n_phi` | `n_xi` | `η_E` | change |
-|---|---|---|---|
-| 20 | 200 | 0.3657 | — |
-| 40 | 200 | 0.3939 | **+0.0282** |
-| 80 | 200 | 0.4773 | **+0.0834** |
-| 20 | 400 | *(running at the stop point — see `docs/gate_status.md`)* | |
-| 20 | 800 | | |
+**Azimuthal refinement at fixed `n_xi = 200`:**
 
-**The increments are growing, not shrinking — they nearly triple on the second
-halving of `Δφ`.** That is not a converging sequence, and it is the strongest
-result of this remediation: `η_E` for ZF22 case 1 has **no azimuthal mesh
-limit**. Each refinement admits a narrower, faster finger, and `η_E` climbs
-(towards, but with no reason to stop at, ZF22's 0.66).
+| `n_phi` | `η_E` | increment |
+|---|---|---|
+| 20 | 0.3657 | — |
+| 40 | 0.3939 | **+0.0282** |
+| 80 | 0.4773 | **+0.0834** |
+
+**Axial refinement at fixed `n_phi = 20`:**
+
+| `n_xi` | `η_E` | increment |
+|---|---|---|
+| 200 | 0.3657 | — |
+| 400 | 0.3508 | −0.0149 |
+| 800 | 0.3340 | −0.0168 |
+
+**Neither direction converges, and they push opposite ways.** Azimuthally the
+increments *grow* — they nearly triple on the second halving of `Δφ`. Axially
+they are flat (−0.0149, −0.0168) where a first-order scheme should halve them.
+A converging sequence has shrinking increments; neither of these does.
+
+**So the "mesh convergence" BENCH-09 observed at 20 × 200 → 40 × 400 was a
+cancellation of two individually non-convergent trends**, one upward and one
+downward, that happened to nearly offset in `t_br`. That is the strongest
+result of this remediation: `η_E` for ZF22 case 1 has **no mesh limit**, and it
+was only ever checked along the one diagonal where the two errors cancel.
 
 This confirms the BENCH-10 reading independently of BF25: an analytically
 Muskat-unstable base state produces a finger whose width is set by the mesh, so
 `η_E` at a fixed time is not a converged functional of it. `BENCH-09`'s claim
-"(i) it is mesh-converged" is **false**, and false in the one direction it never
-tested.
+"(i) it is mesh-converged" is **false**.
 
 ⚠️ The `t_br` column of that study is **discarded**: it was run with
 `record_every = 200`, and finding **R-1** below shows `breakthrough_at` depended
@@ -472,3 +484,21 @@ case-1 mesh study above.
 **Test.** `test_r1_breakthrough_does_not_depend_on_the_logging_frequency`
 asserts bit-identical `t_br` and efficiency across `record_every ∈ {1, 7, 50, 0}`.
 Verified to fail against the previous commit.
+
+---
+
+## B-5 — two records of the same run disagreed — **REPRODUCED, settled by re-running**
+
+`docs/assumptions.md` recorded ZF22 case 1 as `η_E = 0.375`, `t_br = 0.059`;
+`output/zf22_table3.md` recorded 0.366 and 0.054, both at 20 × 200, CFL 0.5.
+
+**Re-run in this session, all ten cases:** case 1 gives `t_br@0.01 = 0.054`,
+`η_E = 0.366`, and **every one of the ten reproduces the values already in
+`output/zf22_table3.md` exactly**. So the results file is current and the
+register rows were stale — written from a superseded run and never updated
+after the NUM-26/NUM-29 fixes. Both register locations are corrected and now
+point at the results file as the single record.
+
+This also confirms that nothing in this remediation moved any ZF22 number:
+`scripts/zf22_table3.py` already used `record_every = 1`, so R-1 did not touch
+it, and A-1's boundary condition was deliberately left unchanged.

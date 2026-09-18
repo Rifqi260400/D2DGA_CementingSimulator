@@ -328,6 +328,12 @@ def test_b1_build_measures_and_reports_the_angle_sensitivity(hb_pair):
     rep = tab.assumption_report()
     assert "angle sensitivity (B-1)" in rep
     assert "not valid for this pair" in rep, rep
+    # the verdict is graded, so a table that is only sensitive at the far end of
+    # its |u_bar| axis is not reported the same way as one that is O(1) wrong
+    # in the middle.  The K-GEP-1 table is the former: 0.0% at |u| = 0, 0.4% at
+    # the median, 9.8% at |u| = 3000 -- SIGNIFICANT, and the run never goes
+    # above |u| = 75.
+    assert "SIGNIFICANT" not in rep, rep
 
 
 def test_b1_newtonian_pair_has_no_angle_sensitivity():

@@ -122,12 +122,20 @@ is no statement of what M0-T5 was supposed to assert.
 
 **What this session added.**
 
-5. *Mesh convergence was never established for `η_E`, and it does not hold*
-   (A-5). At fixed `n_xi = 200`, azimuthal refinement gives
-   `η_E` = 0.3657 → 0.3939 → **0.4773** for `n_phi` = 20 → 40 → 80. **The
-   increments grow — +0.028 then +0.083 — so the sequence is diverging, not
-   converging.** BENCH-09's claim "(i) it is mesh-converged" is correct for
-   `t_br` and false for `η_E`, in the one direction it never refined.
+5. *Mesh convergence was never established for `η_E`, and it does not hold in
+   either direction* (A-5). Refining one direction at a time:
+
+   | `n_phi` (at `n_xi` = 200) | `η_E` | | `n_xi` (at `n_phi` = 20) | `η_E` |
+   |---|---|---|---|---|
+   | 20 | 0.3657 | | 200 | 0.3657 |
+   | 40 | 0.3939 (+0.0282) | | 400 | 0.3508 (−0.0149) |
+   | 80 | **0.4773 (+0.0834)** | | 800 | 0.3340 (−0.0168) |
+
+   Azimuthally the increments **grow**; axially they are **flat** where a
+   first-order scheme should halve them. Neither sequence converges, and they
+   push in opposite directions — so **the 20 × 200 → 40 × 400 diagonal
+   BENCH-09 refined along is precisely where the two errors cancel.** Its
+   claim "(i) it is mesh-converged" is an artefact of that choice.
 6. *An analytic reason, from the paper.* BF25 §3.3's Muskat criterion
    (gate **BENCH-10**, added this session) classifies **case 1 as the only
    Muskat-unstable case of the ten**: `Δw(0⁺) = +0.97` against `−1.96 … −162.9`
@@ -149,12 +157,12 @@ two significant figures.
 **Evidence that would distinguish the remaining possibilities**, in order of
 value:
 
-* ~~A φ-refinement sequence at fixed `n_xi`.~~ **Done this session, and it
-  answers the question:** `η_E` climbs with growing increments through
-  `n_phi` = 20, 40, 80 (0.3657, 0.3939, 0.4773). The functional is not
-  converged and **no agreement with a fixed-time `η_E` should be expected** for
-  this case. What remains open is only whether ZF22's own computation was
-  equally mesh-dependent, which their paper does not report.
+* ~~A φ-refinement sequence at fixed `n_xi`.~~ **Done this session, both
+  directions, and it answers the question:** neither converges (table above).
+  The functional is not converged and **no agreement with a fixed-time `η_E`
+  should be expected** for this case. What remains open is only whether ZF22's
+  own computation was equally mesh-dependent, which their paper does not
+  report — they give `η_E` to two significant figures with no mesh study.
 * Running the full annulus with azimuthal periodicity instead of the
   half-annulus symmetry (`assumptions.md` NUM-05/Q6). ZF22 §5 notes periodicity
   permits azimuthal asymmetry. This is the one structural choice never tested

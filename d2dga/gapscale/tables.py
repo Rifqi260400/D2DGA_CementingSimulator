@@ -238,10 +238,17 @@ class ClosureTable:
         if not np.isfinite(self.angle_sensitivity):
             return "angle sensitivity (B-1): not measured (table was loaded, " \
                    "not built)"
-        d = "  ".join(f"|u|={u:g}: {v:.1%}"
-                      for u, v in sorted(self.angle_sensitivity_detail.items()))
-        verdict = ("benign" if self.angle_sensitivity < 0.05
-                   else "LARGE -- the theta = 0 table is not valid for this pair")
+        det = sorted(self.angle_sensitivity_detail.items())
+        d = "  ".join(f"|u|={u:g}: {v:.1%}" for u, v in det)
+        where = max(det, key=lambda kv: kv[1])[0] if det else float("nan")
+        if self.angle_sensitivity < 0.05:
+            verdict = "benign"
+        elif self.angle_sensitivity < 0.5:
+            verdict = (f"SIGNIFICANT, worst at |u_bar| = {where:g} -- valid only "
+                       f"where |u_bar| stays well below that; check the run's "
+                       f"actual range")
+        else:
+            verdict = "LARGE -- the theta = 0 table is not valid for this pair"
         return (f"angle sensitivity (B-1): worst "
                 f"{self.angle_sensitivity:.1%} [{verdict}]\n  {d}")
 
