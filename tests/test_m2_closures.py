@@ -483,3 +483,86 @@ def test_b4_conv03_conversion_factors_carry_their_minus_signs():
         assert np.all(master < 0.0)
         assert np.allclose(I3_bcf25(c, m), -np.sqrt(m) * master, rtol=1e-13)
         assert np.allclose(I3_zf22(c, m), -(6 / np.sqrt(m)) * master, rtol=1e-13)
+
+
+# =========================================================================
+# Q-2 -- BF25 (2.23) prints TWO expressions joined by "=", and they are not
+# equal.  Recorded in code so nobody re-deriving from the paper loses a day.
+# =========================================================================
+def test_q2_bf25_2_23_two_printed_forms_disagree():
+    """
+    Q-2.  BF25 (2.23) gives I3 twice, the second introduced by "=".  In the unit
+    channel (H = 1, y_i = c) with the five primitive integrals of closures.py:
+
+      FIRST form   [(A + c Bq) I2 - ((1-c) A + c^2 D) I1] / I1
+      SECOND form  [c A D' + c^2 (Bq^2 - F C)] / I1
+                   with D' = int_c^1 (y-c)/eta1 dy, F = int_c^1 1/eta1 dy
+
+    Integrating both for the Newtonian pair (eta1 = sqrt(m), eta2 = 1/sqrt(m)):
+
+      first - second = -c^3 sqrt(m) (c-1)^2 (c+2) / (6 (m c^3 - c^3 + 1))
+
+    which is not identically zero -- it is strictly negative on 0 < c < 1.  So
+    one of the two printed forms is wrong.
+
+    The FIRST is the correct one, and this is established WITHOUT using (2.23)
+    at all: integrating the velocity profile of BF25 (2.9)-(2.10) directly --
+    du/dy = tau/eta, no slip at y = H, continuity at y = y_i -- and matching
+    coefficients of the pressure gradient and the buoyancy vector in
+    int_0^{y_i} u dy = H u_bar q0 + H^3 I3 G_b reproduces BF25 (2.13), (2.24),
+    (2.25) and (2.26) exactly, and gives the first form.  That is asserted here
+    too, because it is the derivation the sign of I3 rests on.
+
+    docs/assumptions.md CONV-03 records that (2.27) is misprinted; it did not
+    record that (2.23) itself is internally inconsistent, which is a second and
+    separate defect in the same equation.
+    """
+    c, m, y, g, gb = sp.symbols('c m y g g_b', real=True)
+    m = sp.Symbol('m', positive=True)
+    eta1, eta2 = sp.sqrt(m), 1 / sp.sqrt(m)
+
+    A = sp.integrate(y ** 2 / eta2, (y, 0, c))
+    C = sp.integrate(y ** 2 / eta1, (y, c, 1))
+    Bq = sp.integrate(y / eta1, (y, c, 1))
+    D = sp.integrate((1 - y) / eta1, (y, c, 1))
+    E = sp.integrate(y * (1 - y) / eta1, (y, c, 1))
+    F = sp.integrate(1 / eta1, (y, c, 1))
+    Dp = sp.integrate((y - c) / eta1, (y, c, 1))
+
+    I1 = sp.simplify(A + C)
+    I2 = sp.simplify((1 - c) * A + c * E)
+    first = sp.simplify(((A + c * Bq) * I2 - ((1 - c) * A + c ** 2 * D) * I1) / I1)
+    second = sp.simplify((c * A * Dp + c ** 2 * (Bq ** 2 - F * C)) / I1)
+
+    gap = sp.simplify(first - second)
+    assert sp.simplify(gap) != 0                      # the two forms disagree
+    assert sp.simplify(gap - (-c ** 3 * sp.sqrt(m) * (c - 1) ** 2 * (c + 2)
+                              / (6 * (m * c ** 3 - c ** 3 + 1)))) == 0
+
+    # --- and the FIRST form is the one the velocity profile gives ----------
+    s = sp.Symbol('s')
+    tau_i = (-g + (1 - c) * gb) * c
+    tau2 = (-g + (1 - c) * gb) * y
+    tau1 = tau_i - (g + c * gb) * (y - c)
+    u1 = -sp.integrate((tau1 / eta1).subs(y, s), (s, y, 1))
+    u2 = u1.subs(y, c) - sp.integrate((tau2 / eta2).subs(y, s), (s, y, c))
+    ubar = sp.simplify(sp.integrate(u2, (y, 0, c)) + sp.integrate(u1, (y, c, 1)))
+    Qc = sp.simplify(sp.integrate(u2, (y, 0, c)))
+
+    assert sp.simplify(ubar - (I1 * g - I2 * gb)) == 0          # BF25 (2.13)
+    P = sp.simplify(sp.expand(Qc).coeff(g))
+    Qb = sp.simplify(sp.expand(Qc).coeff(gb))
+    q0_derived = sp.simplify(P / I1)
+    assert sp.simplify(q0_derived - c * (m * c ** 2 + sp.Rational(3, 2)
+                                         * (1 - c ** 2))
+                       / (m * c ** 3 + 1 - c ** 3)) == 0        # BF25 (2.26)
+    I3_derived = sp.simplify(Qb + q0_derived * I2)
+    assert sp.simplify(I3_derived - first) == 0                 # -> FIRST form
+    assert sp.simplify(I3_derived - second) != 0                # not the second
+
+    # ... and that is what this code implements
+    cc = np.linspace(0.05, 0.95, 19)
+    for mm in (0.2, 1.0, 5.0):
+        ref = np.array([float(first.subs({c: v, m: mm})) for v in cc])
+        assert np.allclose(nwt.script_I3(cc, mm), ref, rtol=1e-12)
+        assert np.all(ref < 0.0)

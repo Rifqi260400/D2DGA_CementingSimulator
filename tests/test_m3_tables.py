@@ -244,3 +244,57 @@ def test_m3_t3_table_covers_the_unit_interval(newt_table, hb_table):
     for tab in (newt_table, hb_table):
         assert tab.c_grid[0] == 0.0
         assert tab.c_grid[-1] == 1.0
+
+
+# ---------------------------------------------------------------- B-1 ------
+def test_b1_angle_assumption_is_bounded(hb_pair):
+    """
+    B-1.  `ClosureTable._solve_one` builds every entry with
+    `u_mean = [0, umag]` against `Gb = [0, gb*H]` -- both purely axial -- so the
+    table stores the theta = 0 slice, where theta is the angle between u_bar and
+    G~_b.  The module docstring used to claim the angle axis "collapses" for a
+    vertical well because G~_b is purely axial.  It does not: u_bar is still a
+    2-vector, and theta != 0 whenever v_bar != 0, i.e. whenever the front is
+    tilted.
+
+    BF25 (2.8)-(2.10) make the gap-scale stress a 2-vector with
+    eta_k = eta_k(|tau_k|), so all four closures depend on theta.  This test
+    measures how much, at the SAME states the table stores, and asserts the
+    bound -- including at the TOP of the umag axis, which the audit flagged as
+    unmeasured.
+
+    It is a bound, not a fix.  The fix is a fifth axis, which NUM-14 already
+    describes for beta != 0.
+    """
+    from d2dga.gapscale.al_solver import TwoLayerGapSolver
+    from d2dga.gapscale.closures import closures_from_solution
+
+    f1, f2 = hb_pair
+    gb = 25.0
+    sol = TwoLayerGapSolver(f1, f2, r=0.01, rho=0.01, n_y=150, tol=1e-8)
+
+    def at(c, u, theta):
+        s = sol.solve_fixed_mean_velocity(
+            c, [u * np.sin(theta), u * np.cos(theta)], [0.0, gb])
+        assert s.converged
+        return closures_from_solution(s)
+
+    worst = {}
+    for u in (0.5, 5.0, 50.0, 500.0):
+        dev = 0.0
+        for c in (0.25, 0.5, 0.75):
+            ref = at(c, u, 0.0)                     # what the table stores
+            for th in (np.pi / 4, np.pi / 2):
+                got = at(c, u, th)
+                for a, b in ((got.I1, ref.I1), (got.I2, ref.I2),
+                             (got.q0, ref.q0), (got.I3, ref.I3)):
+                    dev = max(dev, abs(a - b) / max(abs(b), 1e-30))
+        worst[u] = dev
+
+    # the assumption is exact in the buoyancy-dominated limit and degrades as
+    # |u_bar| grows against gb -- assert both halves, so neither can drift
+    assert worst[0.5] < 5e-3, worst
+    assert worst[5.0] < 3e-2, worst
+    assert worst[0.5] < worst[50.0] < worst[500.0], worst
+    # and the bound at the top of the range tested here, stated explicitly
+    assert worst[500.0] < 0.60, worst

@@ -24,9 +24,33 @@ variables (BF25 A4) that state is
 
 so the table is 4-D once the rheology of the pair is fixed, which it is for any
 one simulation.  We exploit the rotational structure: the gap problem depends on
-the two vectors u_bar and G~_b only through their magnitudes and the angle
-between them, and for a VERTICAL well (beta = 0) G~_b has a single component
-aligned with the axis, so the angle axis collapses.  K-GEP-1 is vertical.
+the two vectors u_bar and G~_b only through their magnitudes and the ANGLE
+between them.
+
+B-1.  An earlier version of this paragraph continued "and for a VERTICAL well
+(beta = 0) G~_b has a single component aligned with the axis, so the angle axis
+collapses".  That is wrong.  G~_b being purely axial does not collapse the
+angle, because u_bar is still a 2-vector: theta = angle(u_bar, G~_b) is non-zero
+whenever v_bar != 0, which is whenever the front is tilted -- i.e. in every case
+of interest.  What the table actually stores is the theta = 0 slice
+(`_solve_one` passes u_mean = [0, umag] against G~_b = [0, gb*H]), and that is
+an APPROXIMATION, not a reduction.
+
+Its size is set by |u_bar| / (gb * I1), i.e. by how far the pressure-driven
+stress is from negligible against the buoyancy-driven one.  Measured on the
+K-GEP-1 pair (gb = 27.9, H = 1) as the deviation of the theta = 90 degree solve
+from the stored theta = 0 one -- see test_b1_angle_assumption_is_bounded:
+
+    |u_bar|      I1       I2       q0       I3
+        0.5   +0.0%    +0.0%    +0.0%    -0.0%
+        5     +0.1%    +0.1%    +0.0%    -0.3%
+       50     +0.6%    +1.4%    +0.1%    -2.6%
+
+The production run reached |u_bar| = 75, so ~3% on I3 is the operating error.
+It grows with |u_bar| and the axis runs to 3000, so the bound is NOT uniform
+over the table -- the test measures the top of the axis too and states it.
+NUM-14 already refuses beta != 0, where a second angle appears; this note is
+about beta = 0, where the approximation is live and was undocumented.
 
 Interpolation
 -------------

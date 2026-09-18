@@ -178,8 +178,20 @@ def main():
     print(f"\n{res.reports[-1].n} steps, {wall:.0f} s, "
           f"conservation {res.conservation_error:.2e}, "
           f"c in [{res.concentration.min():.4f}, {res.concentration.max():.4f}]")
+    # A-2.  t_br is a LEVEL SET of a front the first-order scheme smears, so its
+    # error is O(dxi^(1/2)) -- half order -- while eta_E, an integral, is
+    # O(dxi).  Measured against the exact rarefaction
+    # (test_a2_threshold_front_is_half_order_and_integrals_are_first_order):
+    # ~18% at the 0.01 threshold on n_xi = 80, ~3% at the 0.5 threshold.  The
+    # figures are printed with that attached rather than to four decimals,
+    # because halving the 0.01 error costs four times the cells.
+    _TBR_REL_ERR = {0.01: 0.175, 0.1: 0.069, 0.5: 0.033}      # at n_xi = 80
+    scale = (80.0 / g.n_xi) ** 0.5                            # half order
     print("t_br  " + "  ".join(
-        f"@{th}={res.breakthrough_at(th) / g.Z:.4f}" for th in THRESHOLDS))
+        f"@{th}={res.breakthrough_at(th) / g.Z:.4f}"
+        f"(+-{_TBR_REL_ERR[th] * scale * 100:.0f}%)" for th in THRESHOLDS))
+    print("      the bracket is the DISCRETISATION error of a threshold front, "
+          "O(dxi^1/2); eta_E below is an integral and is O(dxi)")
     eta = displacement_efficiency(geo, res.concentration)
     print(f"eta_E (at {args.volumes} volumes) = {eta:.4f}")
 

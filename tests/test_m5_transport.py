@@ -709,3 +709,59 @@ def test_a1_outlet_import_is_zero_when_the_flux_never_goes_negative():
     geo, sim = _uniform_sim(n_phi=8, n_xi=50, e=0.0, m=m, b_zf22=b_zf)
     sim.run(t_end=1.2 * geo.grid.Z, record_every=1000)
     assert sim.transport.outlet_import == 0.0
+
+
+def test_a2_threshold_front_is_half_order_and_integrals_are_first_order():
+    """
+    A-2, the achievable-accuracy gate.  DERIVED, then measured; nothing here is
+    a relaxed tolerance.
+
+    Derivation.  The LLF update has modified equation
+    c_t + f(c)_xi = d_xi[D_num d_xi c] + O(dxi^2) with
+    D_num = (1/2) alpha dxi (1 - nu), nu the Courant number.  A front therefore
+    spreads diffusively to width W ~ 2 sqrt(D_num t) = O(sqrt(dxi)).  Two
+    consequences with DIFFERENT rates:
+
+      * a quantity defined by a LEVEL SET in the diffusive tail -- t_br at
+        threshold 0.01 -- is displaced by O(W), so its error is O(dxi^(1/2)):
+        HALF order;
+      * a quantity defined by an INTEGRAL of c_bar -- eta_E -- is insensitive to
+        the tail width at leading order, because the diffusive spreading is
+        conservative, so it converges at the scheme's own FIRST order.
+
+    Measured here.  Against the exact rarefaction c = sqrt(1 - (xi/t)/1.5):
+
+        n_xi   front speed at c=0.01   error      order
+          100        1.7150            +14.3%
+          200        1.6650            +11.0%      0.38
+          400        1.6125             +7.5%      0.55
+
+    fitted exponent over the range 0.45-0.55, i.e. 1/2.  The eta_E rates
+    measured in the A-1 sweep on the same scheme are 0.90-0.95, i.e. 1.
+
+    THE CONSEQUENCE, which is why this gate exists: halving the error in
+    `t_br @0.01` costs FOUR times the cells.  On the K-GEP-1 production mesh
+    (n_xi = 80) that error is ~18%, and reaching 1% would need ~300x the cells.
+    `t_br @0.01` is therefore NOT an economically converged quantity and must
+    not be quoted to three decimals; `t_br @0.5` (~3% at n_xi = 80) and eta_E
+    are.  docs/remediation_log.md A-2.
+    """
+    fronts, l1 = {}, {}
+    for n in (100, 200, 400):
+        geo, c, t = _rarefaction(n)
+        xi = geo.grid.xi_centres
+        fronts[n] = float(xi[np.max(np.nonzero(c[0] > 0.01)[0])]) / t
+        exact = np.sqrt(np.clip(1.0 - (xi / t) / 1.5, 0.0, 1.0))
+        l1[n] = float(np.mean(np.abs(c[0] - exact)))
+
+    exact_front = 1.5 * (1.0 - 0.01 ** 2)
+    err = {n: abs(v - exact_front) / exact_front for n, v in fronts.items()}
+    assert all(err[n] > 0 for n in err)
+    assert err[100] > err[200] > err[400]                # converging at all
+    order = np.log2(err[100] / err[400]) / 2.0           # per mesh doubling
+    assert 0.35 < order < 0.75, (err, order)             # half order, not first
+    # and it is genuinely worse than the L1 order of the same solution
+    l1_order = np.log2(l1[100] / l1[400]) / 2.0
+    assert l1_order > order, (order, l1_order)
+    # the size of the error at the production mesh, stated so it cannot drift
+    assert err[100] > 0.10, err                          # >= 10% at n_xi = 100
