@@ -15,9 +15,13 @@ carried over from the build.
 > If a gate existed in the spec but was never given a marker, it is not listed
 > here and its absence is invisible — recorded as a limitation, not a pass.
 
-**Verdict of the run this table is built from:** `pytest tests/` -> **254 passed, 0 failed, 0 errors** (exit 0), 2026-09-18 07:20:14, at the
-commit below. Before this remediation the suite was 223 passed / 0 failed;
-31 tests were added and none removed or skipped.
+**Verdict of the run this table is built from:** `pytest tests/` -> **262 passed, 0 failed, 0 errors** (exit 0), 2026-09-18 19:24:50.
+Before this work the suite was 223 passed / 0 failed; 39 tests were added and
+none removed or skipped. No previously green gate has regressed.
+
+The last 8 are `tests/test_runio.py`, added with **R-2**: a checkpoint could be
+resumed under different physics, because `Simulation.run` checked only the grid
+shape and the checkpoint filename carries six of ~20 settings.
 
 | Gate | Test(s) | Status | Last green at |
 |---|---|---|---|

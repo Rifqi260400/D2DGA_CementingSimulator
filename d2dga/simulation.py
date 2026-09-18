@@ -188,9 +188,19 @@ class Simulation:
     # ------------------------------------------------------------------
     def run(self, t_end, c0=None, max_steps=2_000_000,
             breakthrough_threshold=0.01, on_step=None, record_every=1,
-            checkpoint_path=None, checkpoint_every=180.0):
+            checkpoint_path=None, checkpoint_every=180.0, checkpoint_tag=None):
         """
         Advance to t_end.
+
+        checkpoint_tag : an opaque string identifying the SETTINGS of this run.
+            When given it is stored in the checkpoint and a resume is REFUSED if
+            the stored tag differs.  Without it, resuming checked only the grid
+            shape -- so editing a fluid property and relaunching the same
+            command silently continued a field computed under the old physics,
+            because neither the path nor the shape carries the fluids.
+            `d2dga.runio.fingerprint` produces the tag and
+            `runio.check_resume` reports which setting moved; this is the hard
+            backstop for when a caller forgets to ask.
 
         checkpoint_path : if given, the run state is written there periodically
             and, if the file already exists and matches this grid, the run
@@ -227,6 +237,22 @@ class Simulation:
                 raise ValueError(
                     f"checkpoint {checkpoint_path} holds a {saved.shape} field "
                     f"but this run is {c.shape}; delete it or use another path")
+            stored_tag = str(z["tag"]) if "tag" in z.files else None
+            if checkpoint_tag is not None and not stored_tag:
+                # Written before tags existed.  Its settings cannot be verified,
+                # but refusing would break relaunching a finished legacy run, so
+                # this warns and continues.  New runs always carry a tag.
+                print(f"WARNING: {checkpoint_path} carries no settings tag "
+                      f"(written before d2dga.runio existed), so this resume "
+                      f"cannot be verified against the current config.",
+                      flush=True)
+            elif checkpoint_tag is not None and stored_tag != str(checkpoint_tag):
+                raise ValueError(
+                    f"checkpoint {checkpoint_path} was written with settings tag "
+                    f"{stored_tag!r} but this run is {str(checkpoint_tag)!r}. "
+                    f"Resuming it would continue a field computed under other "
+                    f"physics. Delete it, pass --no-resume, or use another path; "
+                    f"d2dga.runio.check_resume names the settings that differ.")
             c = saved
             t = float(z["t"])
             n = int(z["n"])
@@ -257,6 +283,7 @@ class Simulation:
                 fh, c=c, t=t, n=n, mass_running=mass_running,
                 cons_err=cons_err, t_br=t_br, times=np.array(times),
                 effs=np.array(effs), outlet=np.array(outlet),
+                tag=("" if checkpoint_tag is None else str(checkpoint_tag)),
                 n_picard_unconverged=self.n_picard_unconverged,
                 worst_picard_residual=self.worst_picard_residual)
 

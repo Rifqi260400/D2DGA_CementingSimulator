@@ -39,6 +39,7 @@ from d2dga.geometry import CaliperLogWall, build_geometry      # noqa: E402
 from d2dga.postprocess import (cell_volume, displacement_efficiency,  # noqa: E402
                                narrow_side_profile, residual_fraction,
                                zf23_metrics)
+from d2dga import runio                                        # noqa: E402
 from d2dga.scaling import Scaling                              # noqa: E402
 from d2dga.simulation import Simulation                        # noqa: E402
 
@@ -171,8 +172,23 @@ def main():
     ckpt = os.path.join("output", f"kgep1_ckpt_{args.wall}_{args.inflow}_"
                                   f"{args.n_phi}x{args.n_xi}_w{args.w0}_"
                                   f"v{args.volumes}.npz")
+    # Provenance and the resume guard.  Before this, the checkpoint filename
+    # carried six of ~20 settings, so editing a fluid property and relaunching
+    # the same command SILENTLY resumed a field computed under the old physics
+    # -- `run` checked only the grid shape.  The payload is written beside the
+    # checkpoint and its fingerprint is stored inside it.
+    payload = runio.config_payload(cfg, vars(args))
+    level, message = runio.check_resume(ckpt, payload)
+    if level == "block":
+        raise SystemExit("REFUSING TO RESUME\n  " + message)
+    if level == "warn":
+        print("WARNING: " + message, flush=True)
+    tag = runio.fingerprint(payload)
+    print(f"settings fingerprint {tag}", flush=True)
+    runio.write_config(ckpt, payload)
+
     res = sim.run(t_end=t_end, record_every=1, on_step=on_step,
-                  checkpoint_path=ckpt)
+                  checkpoint_path=ckpt, checkpoint_tag=tag)
     wall = time.time() - t0
 
     print(f"\n{res.reports[-1].n} steps, {wall:.0f} s, "
@@ -248,6 +264,53 @@ def main():
     if static[0]:
         print("   ^ non-zero: the regularisation is load-bearing here, and "
               "PF04 section 5 warns it flatters mud removal.")
+
+    # Everything printed above, written as JSON beside the checkpoint.  Same
+    # values, same postprocess calls -- nothing is recomputed differently for
+    # the file, so the file and the log cannot disagree.
+    zf = None
+    if snap["c"] is not None and snap["t"] > 0:
+        _m = zf23_metrics(geo, snap["c"], snap["t"])
+        zf = {"sampled_at_t_over_Z": snap["t"] / g.Z,
+              "sigma_plus": _m.sigma_plus, "sigma_minus": _m.sigma_minus,
+              "area_plus": _m.area_plus, "area_minus": _m.area_minus,
+              "n_bins": _m.n_bins, "is_dispersive": bool(_m.is_dispersive)}
+    runio.write_metrics(ckpt, {
+        "schema": 1,
+        "settings_fingerprint": tag,
+        "checkpoint": os.path.basename(ckpt),
+        "steps": res.reports[-1].n,
+        "wall_clock_s": wall,
+        "conservation_error": res.conservation_error,
+        "c_min": float(res.concentration.min()),
+        "c_max": float(res.concentration.max()),
+        "eta_E": eta,
+        "t_br_over_Z": {str(th): (res.breakthrough_at(th) / g.Z) for th in THRESHOLDS},
+        "t_br_relative_error": {"0.01": 0.175 * (80.0 / g.n_xi) ** 0.5,
+                                "0.1": 0.069 * (80.0 / g.n_xi) ** 0.5,
+                                "0.5": 0.033 * (80.0 / g.n_xi) ** 0.5},
+        "narrow_side_min": float(np.min(narrow_side_profile(geo, res.concentration))),
+        "residual_fraction": residual_fraction(geo, res.concentration),
+        "volume_pumped": args.volumes * g.Z / capacity,
+        "annulus_capacity": capacity,
+        "zf23": zf,
+        "static_cells_max": static[0],
+        "picard_unconverged": sim.n_picard_unconverged,
+        "worst_picard_residual": sim.worst_picard_residual,
+        "outlet_import_volumes": sim.transport.outlet_import / capacity,
+        "closure_table_range_report": sim.closures.range_report(),
+        "closure_table_assumption_report": tab.assumption_report(),
+        "scaling": {"m": sc.m, "B": sc.B, "b": sc.buoyancy_number,
+                    "Fr_star": sc.Fr_star, "delta_rho": sc.delta_rho,
+                    "w0_hat": sc.w0_hat, "Z": g.Z},
+        "geometry": {"delta_over_pi_min": float(np.min(geo.narrow_gap_parameter(g.xi_centres))),
+                     "delta_over_pi_max": float(np.max(geo.narrow_gap_parameter(g.xi_centres))),
+                     "e_min": float(np.min(geo.e(g.xi_centres))),
+                     "e_max": float(np.max(geo.e(g.xi_centres))),
+                     "H_min": float(H.min()), "H_max": float(H.max())},
+    })
+    print(f"wrote {runio.config_path_for(ckpt)}")
+    print(f"wrote {runio.metrics_path_for(ckpt)}")
 
 
 if __name__ == "__main__":

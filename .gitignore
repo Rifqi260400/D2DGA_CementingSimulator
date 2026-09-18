@@ -6,3 +6,5 @@ output/*.log
 output/closure_table_*.npz
 scratch/
 output/kgep1_ckpt_*.npz
+output/kgep1_ckpt_*.config.json
+output/kgep1_ckpt_*.metrics.json

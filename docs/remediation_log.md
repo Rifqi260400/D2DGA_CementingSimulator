@@ -502,3 +502,78 @@ point at the results file as the single record.
 This also confirms that nothing in this remediation moved any ZF22 number:
 `scripts/zf22_table3.py` already used `record_every = 1`, so R-1 did not touch
 it, and A-1's boundary condition was deliberately left unchanged.
+
+---
+
+## R-2 — a checkpoint could be resumed under different physics — **found during the UI inventory**
+
+Not in the audit. Surfaced while answering the UI build spec's §5 requirement
+that "every run writes the exact config that produced it".
+
+**The hazard.** `Simulation.run` resumed whenever the checkpoint path existed
+and the grid **shape** matched:
+
+```python
+if checkpoint_path and os.path.exists(checkpoint_path):
+    saved = z["c"]
+    if saved.shape != c.shape:
+        raise ValueError(...)
+    c = saved                     # <- and nothing else was checked
+```
+
+The checkpoint filename carries six settings
+(`wall`, `inflow`, `n_phi`, `n_xi`, `w0`, `volumes`); a run has about twenty.
+**Fluid properties, eccentricity, CFL, casing OD and the table resolution are in
+neither the filename nor the grid shape.** So editing `mud_density` in
+`config.py` and relaunching the same command produced the same path and the same
+shape, and the run **silently continued a concentration field computed under the
+old physics**. The only trace was a line reading `resumed from ...`.
+
+`--cfl` is the sharpest case, because it changes the answer and is not in the
+filename at all.
+
+**Fix, in two layers.**
+
+1. `d2dga/runio.py` (new, ~200 lines, no numerics): writes the whole `Config`
+   tree, the CLI arguments and the environment (git SHA, library versions) as
+   `<checkpoint>.config.json`, and the post-processed results as
+   `<checkpoint>.metrics.json`. `fingerprint()` hashes the physics-and-mesh
+   subset — deliberately not the command line, paths or machine, so re-running
+   the same physics elsewhere still resumes. `check_resume()` returns
+   `(level, message)` with level `None` / `"warn"` / `"block"` and names the
+   settings that moved, because "hashes differ" is not actionable.
+2. `Simulation.run(..., checkpoint_tag=...)` stores the tag in the checkpoint and
+   **refuses** to resume across a change. This is the backstop for a caller that
+   forgets to pre-check.
+
+A **legacy** checkpoint (written before tags existed) warns and proceeds rather
+than blocking: refusing would break relaunching a run that finished earlier, and
+all three existing K-GEP-1 checkpoints are complete.
+
+**Verified end to end on the real runner.** Same command, `--cfl` changed from
+0.5 to 0.25 — identical filename, identical grid:
+
+```
+REFUSING TO RESUME
+  output/kgep1_ckpt_synthetic_no_axial_gradient_6x20_w0.2_v0.02.npz was written
+  with DIFFERENT settings, so resuming it would continue a field computed under
+  other physics:
+    args.cfl: 0.5 -> 0.25
+  Pass --no-resume to start over, or use a different output path.
+```
+
+and with the same CFL it resumes as before (`resumed from ...: step 969`).
+
+**Also fixed while testing it:** `describe_mismatch` reported
+`mean_velocities_m_s: [0.05, 0.2, 0.5] -> (0.05, 0.2, 0.5)` as a change, because
+a tuple comes back from JSON as a list. The fingerprint never had that problem —
+both serialise identically — but noise in the one message that has to be trusted
+is worse than noise anywhere else. Both sides are normalised through JSON now.
+
+**Tests.** `tests/test_runio.py`, 9 tests. The two that matter —
+`test_simulation_refuses_to_resume_across_a_settings_change` and
+`test_a_legacy_checkpoint_still_resumes_with_a_warning` — **fail against the
+previous commit** with `KeyError: 'tag is not a file in the archive'`.
+
+**No previously reported number moves.** The guard only refuses; it changes no
+computation, and the three existing checkpoints are unaffected (legacy path).

@@ -112,7 +112,25 @@ one gap (A-13).
 `ClosureTable.range_report()`, `.assumption_report()`, `.angle_sensitivity`,
 `.n_range_points_out`, `.worst_excursion`, `.tuned_r`, `.n_failed`.
 
-### B.6 **On disk after a completed run — this is the problem**
+### B.6 On disk after a completed run
+
+**Updated 2026-09-18 (G-2 / R-2).** A run now leaves three files with a common
+stem, plus the closure table:
+
+| File | Written by | Contents |
+|---|---|---|
+| `output/kgep1_ckpt_<...>.npz` | `Simulation.run` | `c` (final), `t`, `n`, `mass_running`, `cons_err`, `t_br`, `times`, `effs`, `outlet`, picard counters, **`tag`** (settings fingerprint) |
+| `output/kgep1_ckpt_<...>.config.json` | `runio.write_config` | whole `Config` tree, CLI args, `physical` subset, command line, git SHA + dirty flag, Python/numpy/scipy versions |
+| `output/kgep1_ckpt_<...>.metrics.json` | `runio.write_metrics` | `eta_E`, `t_br` at three thresholds **with their half-order error bars**, narrow-side minimum, residual fraction, volume balance, ZF23 metrics (all four + `is_dispersive` + sample time), static cells, picard counters, outlet import, closure-table range report, angle-sensitivity report, the `Scaling` groups, and the geometry ranges |
+| `output/closure_table_<hash>.npz` | `kgep1_run.make_table` | the table, keyed by fluid pair + axes |
+
+Still **not** persisted: `ψ`, and intermediate snapshots of `c̄`. So the Results
+screen can show the final field and the full scalar history, and cannot show a
+snapshot slider or a similarity collapse.
+
+<details><summary>What it was before (kept, because it is why R-2 existed)</summary>
+
+### The old situation
 
 | File | Written by | Contents |
 |---|---|---|
@@ -120,9 +138,12 @@ one gap (A-13).
 | `output/closure_table_<hash>.npz` | `kgep1_run.make_table` | the table, keyed by fluid pair + axes |
 | `output/*.log` | shell redirect of stdout | free text |
 
-**Nothing else.** `scripts/kgep1_run.py` writes **no machine-readable result
-file** — it prints. `output/kgep1_results.md` was written by hand, not by the
-script. There is **no saved config, no ψ, no snapshots, no metrics**.
+**Nothing else.** `scripts/kgep1_run.py` wrote **no machine-readable result
+file** — it printed. `output/kgep1_results.md` was written by hand, not by the
+script. There was **no saved config, no ψ, no snapshots, no metrics** — and no
+way to tell two runs apart, which is R-2.
+
+</details>
 
 ---
 
@@ -157,15 +178,15 @@ before I write UI code** (spec §9).
 
 | ID | Gap | Proposal |
 |---|---|---|
-| **G-1** | `FluidsConfig` cannot express a non-Newtonian mud. The mockup asks for mud τ̂_Y, κ̂, n; `as_fluids()` hard-codes `(mud_viscosity, n=1, τ_Y=0)`. | **Add `mud_consistency`, `mud_power_law_index`, `mud_yield_stress` to `FluidsConfig`, defaulting to the current Newtonian water** (1e-3, 1.0, 0.0) so every existing number is bit-identical. ~8 lines, one dataclass + `as_fluids`. **Needs your OK — it touches `config.py`.** Without it the UI cannot offer the fluid the well actually has. ⚠️ Note this walks straight into finding **B-1**: with a yield stress in both fluids the closure table's θ = 0 slice is O(1) wrong. The UI must surface `assumption_report()` prominently on that path. |
-| **G-2** | **A completed run persists nothing but a checkpoint.** No config, no ψ, no snapshots, no metrics. The spec's build-order step 1 ("results viewer pointed at an existing completed run") has almost nothing to read, and §5's "every run writes the exact config that produced it" is unmet. | **Add a run-manifest writer**, `d2dga/runio.py`, called by the run *scripts* — not by `Simulation`. It writes one directory per run: `config.json` (the `Config` tree + CLI args + git SHA), `snapshots.npz` (c̄ and ψ at N requested times), `history.npz` (times/effs/outlet/StepReport columns), `metrics.json` (postprocess outputs + range/angle/outlet-import reports). **Needs your OK — it is a new solver-side module**, though it touches no numerics. Roughly 150 lines. Everything else in the UI depends on it. |
+| **G-1** | **Not approved — left as is.** `FluidsConfig` cannot express a non-Newtonian mud. The mockup asks for mud τ̂_Y, κ̂, n; `as_fluids()` hard-codes `(mud_viscosity, n=1, τ_Y=0)`. | **Add `mud_consistency`, `mud_power_law_index`, `mud_yield_stress` to `FluidsConfig`, defaulting to the current Newtonian water** (1e-3, 1.0, 0.0) so every existing number is bit-identical. ~8 lines, one dataclass + `as_fluids`. **Needs your OK — it touches `config.py`.** Without it the UI cannot offer the fluid the well actually has. ⚠️ Note this walks straight into finding **B-1**: with a yield stress in both fluids the closure table's θ = 0 slice is O(1) wrong. The UI must surface `assumption_report()` prominently on that path. |
+| **G-2** | ~~A completed run persists nothing but a checkpoint.~~ **DONE 2026-09-18, and it turned out to hide a correctness hazard, not just a bookkeeping one.** | `d2dga/runio.py` now writes `<checkpoint>.config.json` (whole `Config` tree + CLI args + git SHA + library versions) and `<checkpoint>.metrics.json` (every number the run prints). The checkpoint path is unchanged, so runs recorded earlier still resume. **The hazard:** `Simulation.run` resumed on a matching path and grid *shape* only, and fluid properties are in neither — so editing `mud_density` and relaunching the same command silently continued a field computed under the old physics. `Simulation.run(checkpoint_tag=)` now refuses across a settings change, and `runio.check_resume` names the setting that moved. Logged as **R-2** in `docs/remediation_log.md`, registered as REM-10. 9 tests; verified end to end on the real runner with `--cfl` changed. |
 | **G-3** | Live signals cannot leave the process. | **No solver change needed.** `on_step` is already a public hook. The UI's launcher passes an `on_step` that atomically rewrites `status.json` every ~2 s (temp file + `os.replace`, the pattern `run`'s checkpointing already uses); Streamlit polls it. Runs stay plain subprocesses, so **a UI run and a CLI run are the same process invocation** — which is what makes §8's byte-identical requirement testable. I'll state this choice in the UI README. |
 | **G-4** | No `eta_N` (narrow-side efficiency) scalar. | Add `narrow_side_efficiency(geometry, c, fraction=0.25)` to `postprocess.py` — volume-weighted η over the narrowest quartile of φ. It belongs in the solver, not the UI (spec §5). ~6 lines. Low risk; I'd fold it into G-2's OK. |
 | **G-5** | Mockup's "predicted regime from the ZF23 map (b > 80)" does not exist and ZF23 has no such map. | **Replace with the real a-priori predictor I added during remediation:** BF25 §3.3's Muskat criterion, `tests/benchmarks/bf25_muskat.py`. It takes exactly the setup-screen inputs (𝓘₁, 𝓘₂, q₀, 𝓘₃, b) and returns Δw(0⁺) — finger penetrates or is absorbed — validated against BF25's own `M₃^min = 3/2`. That is a genuine prediction from the config, which is what the panel is for. I'd move `bf25_muskat.py` from `tests/benchmarks/` into `d2dga/` so the UI imports it without importing tests. |
 | **G-6** | No pause. | Drop the Pause button. Keep **Stop** (terminate; the checkpoint makes it resumable) and say so in the UI. Do not fake a pause. |
 | **G-7** | Validation screen has no machine-readable source. `docs/gate_status.md` is prose; the suite prints. | The remediation already used a pytest plugin that emits `{exit, counts, failures}` JSON. **Commit it as `tests/run_gates.py`** and have the Validation screen read its output plus `output/zf22_table3.md` and `BLOCKED.md`. Smallest possible change; no test is modified. |
 | **G-8** | Mockup's Validation numbers are wrong (10/10; blocked = casing OD + caliper). | Show the truth: **9/10**, case 1 failing, with a link to BLK-6; and the real `BLOCKED.md` list. |
-| **G-9** | `Config` has no field for CFL, inflow BC, Picard settings, wall choice, or volumes — those live as CLI args and `Simulation` kwargs. | Add a `RunConfig` dataclass to `config.py` holding them, and have `kgep1_run.py` build its `Simulation` from it. This is what makes §5's "UI reads the same definition the CLI uses" true rather than aspirational. **Part of the G-1/G-2 OK.** |
+| **G-9** | `Config` has no field for CFL, inflow BC, Picard settings, wall choice, or volumes — those live as CLI args and `Simulation` kwargs. **Still open.** | G-2 solved *provenance* (a run records what produced it) but not *definition*: the UI still has nowhere single to read CFL's default, range and choices from. **Cheapest fix, and smaller than the `RunConfig` dataclass I first proposed: extract `kgep1_run.py`'s `ArgumentParser` into a `build_parser()` function and have the UI introspect it** for names, defaults, `choices` and help text. That is genuinely one source of truth with no restatement, and it is a ~3-line move inside a script rather than a change to `config.py`. **Needs your OK before the Case-setup screen is built** — until then that screen would have to restate defaults, which §5 forbids. |
 | **G-10** | Re is reported but unused by the model. | Show it greyed with "not used — D2DGA is non-inertial", rather than dropping it: its absence is informative (ZF22 cases 9/10 test exactly this). |
 
 ## E. Proposed deviations from the mockup
