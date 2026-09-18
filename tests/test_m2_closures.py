@@ -404,3 +404,82 @@ def test_num02_al_parameter_sets_the_rate_and_never_the_answer():
                                         max_iter=200000)
         sol = tuned.solve_fixed_mean_velocity(0.5, [0.0, 1.0], [0.0, g])
         assert sol.converged and sol.iterations <= worst
+
+
+# =========================================================================
+# B-4 / CONV-03 -- the cross-paper check that settles the duplicate register
+# rows, done on the PHYSICAL FLUX rather than on anyone's printed I3.
+# =========================================================================
+def test_b4_conv03_buoyant_flux_agrees_with_zf22_4_25():
+    """
+    B-4.  `docs/assumptions.md` carried two CONV-03 rows that disagreed on the
+    SIGN of the conversions to ZF22 (4.26) and BCF25 (23).  This settles it
+    from the primary sources, on the quantity that actually enters the model.
+
+    BF25 (2.21), xi-component, r_a = 1, beta = 0:
+
+        q_buoy = b~ H^3 I3^BF25(c, m) ,        b~ = sqrt(m) b_ZF22   (CONV-02)
+
+    ZF22 (4.25), same component:
+
+        q_buoy = [Delta_rho / F^2] (H^3 / 6 eta_2) I3^ZF22(c, m)
+
+    read with ZF22's OWN conventions, both stated in its own text: at (4.24)
+    ZF22 writes `rho = rho_2 + (1 - c) Delta_rho` against `rho = (1-c)rho_1 +
+    c rho_2`, i.e. **Delta_rho = rho_1 - rho_2**, the same ordering as BF25 --
+    so Delta_rho/F^2 = -b_ZF22, NOT +b_ZF22; and eta_2 = mu_2/mu_1 = 1/m.
+
+    With those readings the two papers agree to machine precision, and they
+    agree on the NEGATIVE I3 that this code uses.  Reading ZF22's Delta_rho
+    with the opposite sign flips the result, which is precisely the mistake the
+    stale register row encoded.
+    """
+    from d2dga.scaling import zf22_buoyancy_to_bf25
+
+    def I3_zf22(c, m):                      # ZF22 (4.26), verbatim
+        return (c ** 2 * (1 - c) ** 3 * (4 * m * c + 3 * (1 - c))
+                / (2 * m * (m * c ** 3 + 1 - c ** 3)))
+
+    worst = 0.0
+    for m in (0.2, 0.5, 2.0, 5.0):
+        for b_zf in (-50.0, 10.0, 100.0, 1000.0):
+            for c in (0.2, 0.5, 0.8):
+                for H in (0.4, 1.0, 1.7):
+                    ours = zf22_buoyancy_to_bf25(b_zf, m) * H ** 3 \
+                        * nwt.script_I3(c, m)
+                    theirs = -b_zf * (m * H ** 3 / 6.0) * I3_zf22(c, m)
+                    worst = max(worst, abs(ours - theirs)
+                                / max(abs(theirs), 1e-300))
+    assert worst < 1e-13, worst
+
+
+def test_b4_conv03_conversion_factors_carry_their_minus_signs():
+    """
+    B-4.  The two stale-row conversions, asserted with their signs.  Against the
+    register row that omitted them this fails by a factor of -1.
+
+    Both published forms are printed POSITIVE on 0 < c < 1 while the derived
+    master is negative, so both conversions carry a minus:
+
+        BCF25 (23)  = -sqrt(m)   * MASTER
+        ZF22 (4.26) = -(6/sqrt(m)) * MASTER
+
+    Note also that BCF25 (23) and BF25 (2.27) are the same printed formula
+    except for the numerator -- BCF25 has 3(1-c), BF25 has 3(1-c^2) -- so ZF22
+    and BCF25 between them confirm, independently of this code, that BF25
+    (2.27)'s 3(1-c^2) is a transcription error.
+    """
+    def I3_bcf25(c, m):                     # BCF25 (23), verbatim
+        return (c ** 2 * (1 - c) ** 3 * (4 * m * c + 3 * (1 - c))
+                / (12 * (m * c ** 3 + 1 - c ** 3)))
+
+    def I3_zf22(c, m):                      # ZF22 (4.26), verbatim
+        return (c ** 2 * (1 - c) ** 3 * (4 * m * c + 3 * (1 - c))
+                / (2 * m * (m * c ** 3 + 1 - c ** 3)))
+
+    c = np.linspace(0.02, 0.98, 97)
+    for m in (0.006, 0.2, 1.0, 5.0, 160.0):
+        master = nwt.script_I3(c, m)
+        assert np.all(master < 0.0)
+        assert np.allclose(I3_bcf25(c, m), -np.sqrt(m) * master, rtol=1e-13)
+        assert np.allclose(I3_zf22(c, m), -(6 / np.sqrt(m)) * master, rtol=1e-13)

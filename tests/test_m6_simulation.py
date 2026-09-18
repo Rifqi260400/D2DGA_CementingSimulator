@@ -181,6 +181,39 @@ def test_time_dependent_flow_rate_is_honoured():
         t += dt
 
 
+def test_b6_record_every_zero_means_endpoints_only():
+    """
+    B-6.  `record_every=0` -- the natural way to ask for "no history" -- raised
+    ZeroDivisionError from `n % record_every`.  It now means endpoints only.
+    Against the old code this test fails with ZeroDivisionError.
+    """
+    geo, sim = build(n_phi=8, n_xi=40, e=0.3, b=5.0, m=0.5)
+    res = sim.run(t_end=0.2 * geo.grid.Z, record_every=0)
+    assert len(res.reports) == 1                       # the final state only
+    assert res.reports[-1].t >= 0.2 * geo.grid.Z
+    # and it must agree with a fully recorded run
+    geo2, sim2 = build(n_phi=8, n_xi=40, e=0.3, b=5.0, m=0.5)
+    ref = sim2.run(t_end=0.2 * geo2.grid.Z, record_every=1)
+    assert np.allclose(res.concentration, ref.concentration, rtol=0, atol=0)
+
+
+def test_b3_interval_wavespeed_is_the_default():
+    """
+    B-3.  transport.py's docstring and assumptions.md NUM-17 both stated that
+    endpoint-only LLF wavespeeds are "sufficient -- no interval maximum is
+    needed", which is the opposite of NUM-26 and is exactly the justification a
+    maintainer would use to flip this default back.  The prose is fixed; this
+    pins the behaviour it was contradicting.
+    """
+    import inspect
+
+    from d2dga.transport import TransportSolver
+    default = inspect.signature(TransportSolver).parameters["wavespeed"].default
+    assert default == "interval", (
+        "the LLF wavespeed must default to the interval maximum; "
+        "endpoint-only evaluation is not monotone -- see NUM-26")
+
+
 # =========================================================================
 # M6-T3 -- grid independence  (NUM-07)
 # =========================================================================

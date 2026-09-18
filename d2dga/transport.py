@@ -153,10 +153,16 @@ here rather than assumed:
   * q0(0) = 0, q0(1) = 1, I3(0) = I3(1) = 0 exactly.  The grouping of the
     Newtonian denominator (see gapscale/newtonian.py) is what makes q0(1) = 1
     exact rather than 1 - 2e-16.
-  * the LLF coefficients bound the flux-function slopes evaluated AT THE
-    NEIGHBOURING CELL VALUES.  Because each neighbour enters the update through
-    its own value only, endpoint evaluation is sufficient -- no interval
-    maximum is needed.
+  * the LLF coefficients bound the flux-function slope over the whole CLOSED
+    INTERVAL between the two states at a face.  (An earlier version of this
+    paragraph claimed that endpoint evaluation is sufficient "because each
+    neighbour enters the update through its own value only".  That is wrong,
+    and it is wrong in the direction that breaks the scheme: alpha depends on
+    BOTH states, so d/dc_S[alpha(c_S,c_C)(c_S-c_C)] carries a (d alpha/d c_S)
+    term that an endpoint-only alpha lets go negative.  See NUM-26 above, which
+    measures the resulting violation at c_bar = -0.0089.  The claim survived
+    here after NUM-26 was fixed and is corrected now; `wavespeed="interval"` is
+    and must remain the default.)
   * the buoyancy coefficient [b H^3 ...] is evaluated at CELL CENTRES, not on
     the face.  That is what makes the centre cell's own flux contributions
     cancel between its two opposite faces, leaving F_C with no flux term at
@@ -246,6 +252,21 @@ class TransportSolver:
         # coefficient is the maximum over the whole interval between the states
         # at a face, which is what makes the scheme monotone.
         self._nodes = np.asarray(closures.wavespeed_nodes(), dtype=float)
+
+        # A-1.  With b > 0 and I3 < 0 the axial flux G is NEGATIVE over much of
+        # 0 < c < 1, so while a smeared front is crossing the outlet cell the
+        # xi = Z face runs backwards and fluid 2 enters from the ghost region.
+        # That is NOT a boundary-condition defect: the exact entropy solution
+        # never contains those intermediate concentrations (for the K-GEP-1 and
+        # ZF22 flux functions the upper concave envelope is the straight chord),
+        # so the spurious flux is created entirely by the first-order smearing
+        # and it is measured to vanish at exactly first order in dxi --
+        # test_a1_outlet_import_vanishes_at_first_order.  The zero-gradient
+        # ghost is also the ONLY closure that preserves a uniform state
+        # exactly, which is the property that would break first if it were
+        # changed.  But an artefact nobody measures becomes permanent, so the
+        # volume is accumulated here and the run scripts print it.
+        self.outlet_import = 0.0
 
     # ------------------------------------------------------------------
     # state at cell centres
@@ -470,6 +491,8 @@ class TransportSolver:
 
         influx = dt * float(np.sum(Xi[:, 0]))
         outflux = dt * float(np.sum(Xi[:, -1]))
+        if outflux < 0.0:                       # A-1: fluid 2 entering at xi = Z
+            self.outlet_import -= outflux
         return c_new, dt, influx - outflux
 
     # ------------------------------------------------------------------

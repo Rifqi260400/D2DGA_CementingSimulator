@@ -38,6 +38,23 @@ def build(n_phi=16, n_xi=200, beta=0.0, e=0.0, m=1.0, b=0.0, wall=None,
     return geo, ell, tr
 
 
+def _uniform_sim(n_phi, n_xi, e, m, b_zf22, cfl=0.5):
+    """A coupled Simulation on a uniform annulus, driven from a ZF22 buoyancy
+    number.  Used by the A-1 outflow tests, which need `run`, not just the
+    transport solver."""
+    from d2dga.geometry import Geometry as _G
+    from d2dga.scaling import zf22_buoyancy_to_bf25
+    from d2dga.simulation import Simulation
+
+    b = zf22_buoyancy_to_bf25(b_zf22, m)
+    well = WellConfig(inclination_rad=0.0, **SHORT)
+    geo = _G(well, UniformWall(well.gauge_hole_diameter_m),
+             ConstantEccentricity(e), GridConfig(n_phi, n_xi))
+    sim = Simulation(geo, NewtonianClosures(m), froude=1.0, delta_rho=-b,
+                     cfl=cfl, inflow_concentration=1.0)
+    return geo, sim
+
+
 # =========================================================================
 # formulation -- the conservation form is exact, not an approximation
 # =========================================================================
@@ -619,3 +636,76 @@ def test_num29_inflow_face_delivers_exactly_the_pumped_flux():
             # K-GEP-1 fluids the same mechanism gave eta = 0.034 against 0.009
             # of a volume pumped.
             assert present > pumped * 1.05, (present, pumped)
+
+
+# =========================================================================
+# A-1 -- the outflow face, and why it is NOT a boundary-condition defect
+# =========================================================================
+def test_a1_outlet_import_vanishes_at_first_order():
+    """
+    A-1 (reported as a MAJOR finding; NOT reproduced as a defect).
+
+    With b > 0 and I3 < 0 the axial flux G = (1/2)q0 dPsi/dphi + b H^3 r_a I3 is
+    negative over most of 0 < c < 1, so the xi = Z face runs BACKWARDS while a
+    front is crossing it and displacing fluid enters the annulus from the
+    zero-gradient ghost cell.  The audit measured -10.1 x Q instantaneously and
+    3.5% of the job entering that way on a 10 x 50 mesh, and read it as the
+    unfixed mirror of NUM-29.
+
+    It is not.  For these flux functions the upper concave envelope of
+    f = q0 + b I3 on [0,1] is the straight chord from (0,0) to (1,1), so the
+    exact entropy solution is a single wave and the intermediate concentrations
+    that make f negative NEVER OCCUR.  The spurious flux is manufactured
+    entirely by the first-order smearing of the front, and it therefore
+    converges away.  Measured on a concentric annulus, m = 0.2, b_ZF22 = 100:
+
+        n_xi   outlet import (volumes)   ratio
+          50          0.003752
+         100          0.001879           2.00
+         200          0.000939           2.00
+         400          0.000467           2.01
+
+    -- exactly first order, while eta_E converges to the exact entropy solution
+    at rate 0.90.  At b_ZF22 = 10, where f >= 0 everywhere, it is identically
+    zero.  So the zero-gradient outflow is correct as written, and it is also
+    the only closure that preserves a uniform state exactly.
+
+    This test is the regression lock: a genuine defect in the outflow treatment
+    would make this quantity PLATEAU instead of halving.  Verified to fail when
+    the outlet ghost is perturbed away from replication.
+    """
+    from d2dga.postprocess import displacement_efficiency
+
+    imports = {}
+    for n_xi in (50, 100):
+        geo, sim = _uniform_sim(n_phi=8, n_xi=n_xi, e=0.0, m=0.2, b_zf22=100.0)
+        Z = geo.grid.Z
+        res = sim.run(t_end=1.2 * Z, record_every=1000)
+        cap = float(np.sum(sim.transport.Hra) * sim.transport.cell_area)
+        imports[n_xi] = sim.transport.outlet_import / cap
+        # sanity: the maximum principle and the efficiency are still sound
+        assert -1e-12 <= res.concentration.min()
+        assert res.concentration.max() <= 1.0 + 1e-12
+        assert 0.0 < displacement_efficiency(geo, res.concentration) < 1.0
+
+    assert imports[50] > 1e-4, imports        # the artefact is real, not noise
+    ratio = imports[50] / imports[100]
+    assert ratio > 1.7, (imports, ratio)     # and it is O(dxi), not O(1)
+
+
+def test_a1_outlet_import_is_zero_when_the_flux_never_goes_negative():
+    """A-1, the other half: at b_ZF22 = 10 the flux function f = q0 + b I3 is
+    non-negative on all of [0,1], no face can run backwards, and the import is
+    identically zero.  That pins the mechanism to the sign of f, not to the
+    boundary."""
+    from d2dga.gapscale import newtonian as _n
+    from d2dga.scaling import zf22_buoyancy_to_bf25
+
+    m, b_zf = 0.2, 10.0
+    cc = np.linspace(0.0, 1.0, 20001)
+    f = _n.q0(cc, m) + zf22_buoyancy_to_bf25(b_zf, m) * _n.script_I3(cc, m)
+    assert f.min() >= -1e-12, f.min()
+
+    geo, sim = _uniform_sim(n_phi=8, n_xi=50, e=0.0, m=m, b_zf22=b_zf)
+    sim.run(t_end=1.2 * geo.grid.Z, record_every=1000)
+    assert sim.transport.outlet_import == 0.0

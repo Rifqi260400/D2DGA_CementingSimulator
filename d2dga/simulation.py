@@ -287,7 +287,11 @@ class Simulation:
                 else:
                     t_br = t
 
-            if n % record_every == 0 or t >= t_end:
+            # B-6: record_every = 0 is the natural way to ask for "endpoints
+            # only", and it used to raise ZeroDivisionError here.  Zero (or
+            # None) now means exactly that: no intermediate samples, but the
+            # final state is always recorded, so `reports[-1]` is never empty.
+            if (record_every and n % record_every == 0) or t >= t_end:
                 times.append(t)
                 effs.append(m / self._capacity)
                 outlet.append(out)

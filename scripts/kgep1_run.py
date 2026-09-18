@@ -202,6 +202,14 @@ def main():
     # more, and these runs were launched under `-W ignore::UserWarning`, so the
     # evidence that the closures were being EXTRAPOLATED was destroyed.  The
     # record is now state on the table and is printed unconditionally here.
+    # A-1.  Gross volume of displacing fluid that entered through the OUTLET
+    # while the smeared front was crossing it.  It is an O(dxi) artefact and
+    # must fall roughly in half when n_xi doubles; if it does not, the outflow
+    # treatment has a real defect.  Quoted against the annulus capacity.
+    print(f"outlet import (A-1 artefact) = "
+          f"{sim.transport.outlet_import / capacity:.5f} volumes "
+          f"({100 * sim.transport.outlet_import / capacity / args.volumes:+.3f}% "
+          f"of the job); expect it to halve when n_xi doubles", flush=True)
     rr = sim.closures.range_report()
     print("closure-table range: " + (rr if rr else "all queries inside the table"),
           flush=True)
