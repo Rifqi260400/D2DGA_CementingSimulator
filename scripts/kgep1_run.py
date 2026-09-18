@@ -98,25 +98,62 @@ def make_table(sc, geo, n_c, n_h, cache_dir="output"):
     return tab, path, time.time() - t0
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def build_parser() -> argparse.ArgumentParser:
+    """
+    The run parameters, defined once.
+
+    Extracted from `main` so that the UI can INTROSPECT it -- names, defaults,
+    types, `choices`, help text -- instead of restating them in a second place
+    where they would drift.  `ui/` reads this; nothing about a parameter is
+    written down twice.  Units and physical ranges that argparse cannot express
+    live in `metadata()` below, next to it rather than in the UI layer.
+    """
+    ap = argparse.ArgumentParser(
+        description="D2DGA cement displacement on K-GEP-1.")
     ap.add_argument("--wall", default="synthetic",
-                    choices=("synthetic", "caliper"))
-    ap.add_argument("--w0", type=float, default=0.2)
-    ap.add_argument("--n-phi", type=int, default=16)
-    ap.add_argument("--n-xi", type=int, default=150)
-    ap.add_argument("--cfl", type=float, default=0.5)
-    ap.add_argument("--volumes", type=float, default=1.2)
+                    choices=("synthetic", "caliper"),
+                    help="wall profile: the synthetic sinusoid, or the measured "
+                         "caliper log (delta/pi 0.168 against 0.083, ~7x the cost)")
+    ap.add_argument("--w0", type=float, default=0.2,
+                    help="annular mean velocity w0_hat, m/s")
+    ap.add_argument("--n-phi", type=int, default=16,
+                    help="azimuthal cells over the HALF annulus")
+    ap.add_argument("--n-xi", type=int, default=150,
+                    help="axial cells; t_br error is O(dxi^1/2), see A-2")
+    ap.add_argument("--cfl", type=float, default=0.5,
+                    help="multiplier on the BCF25 (44) monotonicity bound")
+    ap.add_argument("--volumes", type=float, default=1.2,
+                    help="pumped volume, in annulus volumes")
     ap.add_argument("--no-resume", action="store_true",
                     help="delete any existing checkpoint and start over")
-    ap.add_argument("--n-c", type=int, default=31)
-    ap.add_argument("--n-h", type=int, default=9)
+    ap.add_argument("--n-c", type=int, default=31,
+                    help="closure-table concentration nodes (NUM-03 open)")
+    ap.add_argument("--n-h", type=int, default=9,
+                    help="closure-table half-gap nodes")
     ap.add_argument("--inflow", default="no_axial_gradient",
                     choices=("no_axial_gradient", "uniform"),
                     help="bottom-hole condition, assumptions.md NUM-04.  B02 "
                          "(70) permits backflow through the shoe; a real shoe "
                          "does not, which is what 'uniform' forbids.")
-    args = ap.parse_args()
+    return ap
+
+
+# Units and admissible ranges, which argparse has no field for.  Kept here, next
+# to the parser, so the UI reads both from one module.  `lo`/`hi` are inclusive
+# bounds the solver itself enforces or that are physically meaningless outside.
+PARAM_META = {
+    "w0":      {"unit": "m/s",      "lo": 1e-4, "hi": 5.0},
+    "n_phi":   {"unit": "cells",    "lo": 2,    "hi": 256},
+    "n_xi":    {"unit": "cells",    "lo": 2,    "hi": 2000},
+    "cfl":     {"unit": "-",        "lo": 1e-3, "hi": 1.0},
+    "volumes": {"unit": "volumes",  "lo": 1e-3, "hi": 10.0},
+    "n_c":     {"unit": "nodes",    "lo": 2,    "hi": 401},
+    "n_h":     {"unit": "nodes",    "lo": 1,    "hi": 65},
+}
+
+
+def main():
+    args = build_parser().parse_args()
 
     cfg = Config(grid=GridConfig(args.n_phi, args.n_xi))
     geo = make_geometry(cfg, args.wall)
