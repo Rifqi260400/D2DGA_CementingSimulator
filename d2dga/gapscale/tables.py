@@ -82,6 +82,17 @@ class ClosureTable:
     _interp: dict = field(default_factory=dict, init=False, repr=False)
     _axes: list = field(default_factory=list, init=False, repr=False)
     n_failed: int = field(default=0, init=False)
+    # A-3/B-2.  The range guard used to be a UserWarning and nothing else, so a
+    # `-W ignore::UserWarning` on the command line removed the only evidence
+    # that a result rested on extrapolated closures -- which is exactly what
+    # happened to the K-GEP-1 production runs.  The warning is kept for
+    # interactive use, but the RECORD is now state on the table: it is updated
+    # on every query, it cannot be switched off, and `range_report()` is
+    # printed by the run scripts.  `derivative_bounds` records too; it did not
+    # even warn before.
+    n_range_queries: int = field(default=0, init=False)
+    n_range_points_out: dict = field(default_factory=dict, init=False)
+    worst_excursion: dict = field(default_factory=dict, init=False, repr=False)
 
     # -- axis bookkeeping ---------------------------------------------------
     def _axis_list(self):
@@ -250,6 +261,11 @@ class ClosureTable:
         c, H, umag, gb = np.broadcast_arrays(*[np.asarray(x, float)
                                                for x in (c, H, umag, gb)])
         pts = np.stack([c.ravel(), H.ravel(), umag.ravel(), gb.ravel()], axis=-1)
+        # B-2: this path had no range check at all, so out-of-range queries for
+        # the LLF wavespeeds were silent BY CONSTRUCTION, not merely by a
+        # command-line flag.  It extrapolates from the same axes as __call__ and
+        # is called on every face of every step, so it is recorded identically.
+        self._record_range(pts, warn=False)
         return (np.abs(self._dinterp["q0"](pts)).reshape(c.shape),
                 np.abs(self._dinterp["I3"](pts)).reshape(c.shape))
 
@@ -261,26 +277,67 @@ class ClosureTable:
         c, H, umag, gb = np.broadcast_arrays(*[np.asarray(x, float)
                                                for x in (c, H, umag, gb)])
         pts = np.stack([c.ravel(), H.ravel(), umag.ravel(), gb.ravel()], axis=-1)
-        if warn_out_of_range:
-            self._check_range(pts)
+        # The record is unconditional; `warn_out_of_range` now governs only
+        # whether a warning is ALSO emitted (A-3).
+        self._record_range(pts, warn=warn_out_of_range)
         vals = {k: f(pts).reshape(c.shape) for k, f in self._interp.items()}
         return vals["I1"], vals["I2"], vals["q0"], vals["I3"]
 
-    def _check_range(self, pts):
-        """M3-T3: name the offending cell rather than silently extrapolating."""
+    def _record_range(self, pts, warn=True):
+        """
+        M3-T3, A-3, B-2.  Record -- always -- every query that falls outside the
+        tabulated box, and optionally warn as well.
+
+        The counters are the durable evidence.  A warning can be silenced by a
+        `-W` flag, a `warnings.simplefilter`, or a pytest configuration, and if
+        that happens the fact that a result rests on linear EXTRAPOLATION of the
+        closures leaves no trace at all.  These do not go away.
+        """
+        self.n_range_queries += int(pts.shape[0])
         for j, (name, axis) in enumerate(self._axes):
             if axis.size == 1:
                 continue
-            lo, hi = axis[0], axis[-1]
-            bad = (pts[:, j] < lo - 1e-12) | (pts[:, j] > hi + 1e-12)
-            if np.any(bad):
-                k = int(np.argmax(bad))
+            lo, hi = float(axis[0]), float(axis[-1])
+            below, above = lo - pts[:, j], pts[:, j] - hi
+            worst = float(np.max(np.maximum(below, above)))
+            if worst <= 1e-12:
+                continue
+            bad = (below > 1e-12) | (above > 1e-12)
+            n_bad = int(np.count_nonzero(bad))
+            self.n_range_points_out[name] = \
+                self.n_range_points_out.get(name, 0) + n_bad
+            k = int(np.argmax(np.maximum(below, above)))
+            prev = self.worst_excursion.get(name)
+            if prev is None or worst > prev[0]:
+                self.worst_excursion[name] = (worst, float(pts[k, j]), lo, hi)
+            if warn:
                 warnings.warn(
                     f"closure table: axis '{name}' out of range at flat cell "
                     f"{k}: requested {pts[k, j]:.6g}, table covers "
                     f"[{lo:.6g}, {hi:.6g}]. Linear extrapolation is being used; "
                     f"widen the table or check the solution.",
                     ClosureTableRangeWarning, stacklevel=3)
+
+    def reset_range_record(self):
+        """Forget the accumulated out-of-range record (e.g. between runs)."""
+        self.n_range_queries = 0
+        self.n_range_points_out = {}
+        self.worst_excursion = {}
+
+    def range_report(self) -> str:
+        """One line per offending axis; the empty string when the table was
+        never queried outside its own box.  Printed by the run scripts so that
+        no result can be quoted without it."""
+        if not self.n_range_points_out:
+            return ""
+        out = [f"closure table queried OUTSIDE its range "
+               f"({self.n_range_queries} point-queries total):"]
+        for name, n in sorted(self.n_range_points_out.items()):
+            worst, val, lo, hi = self.worst_excursion[name]
+            out.append(f"  axis '{name}': {n} points out, worst request "
+                       f"{val:.6g} against [{lo:.6g}, {hi:.6g}] "
+                       f"(excursion {worst:.4g}); LINEAR EXTRAPOLATION was used")
+        return "\n".join(out)
 
     # -- diagnostics ----------------------------------------------------------
     def q0_is_monotone_in_c(self) -> bool:

@@ -193,6 +193,51 @@ def test_m3_t3_in_range_is_silent(hb_table):
                 if issubclass(w.category, ClosureTableRangeWarning)]
 
 
+def test_a3_range_record_survives_warning_suppression(hb_pair):
+    """
+    A-3.  The K-GEP-1 production runs were launched under
+    `-W ignore::UserWarning`, which removed the ONLY evidence that the closure
+    table was being extrapolated -- 76 suppressed warnings in the first 400 of
+    85 474 steps.  A guard that a command-line flag can erase is not a guard.
+
+    Against the old code this test fails: there was no record to survive, only
+    the warning.
+    """
+    f1, f2 = hb_pair
+    tab = ClosureTable(f1, f2, c_grid=np.linspace(0.0, 1.0, 11),
+                       h_grid=np.array([0.8, 1.0, 1.2]), n_y=120,
+                       tol=1e-8).build()
+    assert tab.range_report() == ""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("ignore")          # exactly what -W ignore does
+        tab(np.array([0.5, 0.5, 0.5]), H=np.array([1.0, 1.0, 2.5]))
+    assert not caught                            # the warning really is gone
+    assert tab.n_range_points_out["H"] == 1      # the record is not
+    worst, val, lo, hi = tab.worst_excursion["H"]
+    assert val == 2.5 and (lo, hi) == (0.8, 1.2)
+    assert abs(worst - 1.3) < 1e-12
+    assert "axis 'H'" in tab.range_report()
+    assert "EXTRAPOLATION" in tab.range_report()
+    tab.reset_range_record()
+    assert tab.range_report() == ""
+
+
+def test_b2_derivative_bounds_records_out_of_range_too(hb_pair):
+    """
+    B-2.  `derivative_bounds` supplies every LLF wavespeed on the tabulated
+    path and had no range check at all, so out-of-range queries there were
+    silent BY CONSTRUCTION rather than by a flag.  Against the old code this
+    fails: `n_range_points_out` stays empty however far out the query is.
+    """
+    f1, f2 = hb_pair
+    tab = ClosureTable(f1, f2, c_grid=np.linspace(0.0, 1.0, 11),
+                       h_grid=np.array([0.8, 1.0, 1.2]), n_y=120,
+                       tol=1e-8).build()
+    tab.derivative_bounds(np.array([0.5, 0.5]), H=np.array([1.0, 3.0]))
+    assert tab.n_range_points_out.get("H") == 1
+    assert tab.worst_excursion["H"][1] == 3.0
+
+
 def test_m3_t3_table_covers_the_unit_interval(newt_table, hb_table):
     """c is a volume fraction, so the table must cover [0, 1] exactly -- no
     run can ever ask for a concentration outside it."""

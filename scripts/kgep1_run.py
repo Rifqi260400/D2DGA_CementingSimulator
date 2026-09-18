@@ -64,7 +64,15 @@ def make_table(sc, geo, n_c, n_h, cache_dir="output"):
     # fluid pair (FLU-06) any azimuthal tilt of the front drives |u| into the
     # hundreds, so a linear axis to 4 -- ample for the published cases -- is off
     # the end within the first timesteps.  Geometric, to 3000.
-    umag_grid = np.concatenate([[0.02], np.geomspace(0.1, 3000.0, 15)])
+    # A-3.  The axis used to start at 0.02, but |u_bar| reaches 1e-3 at
+    # stagnation points, so 315 of 25.9M closure queries in the production run
+    # fell BELOW the axis and were served by linear extrapolation.  |u_bar| >= 0
+    # always, so anchoring the axis at 0 makes an under-range query impossible.
+    # It costs one extra plane (6% of the build) and changes nothing: the gap
+    # solve at umag = 0, 1e-3 and 0.02 agrees to six significant figures on this
+    # fluid pair, which is why the extrapolation was harmless here and why the
+    # DETECTION (tables.range_report) mattered more than the extrapolation.
+    umag_grid = np.concatenate([[0.0, 0.02], np.geomspace(0.1, 3000.0, 15)])
     # the key covers EVERY axis: `load` verifies them and raises on a mismatch,
     # but a key that ignored one would turn that loud signal into a routine
     # failure the first time an axis was tuned
@@ -190,6 +198,13 @@ def main():
     print(f"volume balance: pumped {pumped:.4f}, present {eta:.4f}, "
           f"difference {eta - pumped:+.5f} "
           f"({100 * (eta - pumped) / args.volumes:+.2f}% of the job) -- {note}")
+    # A-3.  The closure table's range guard used to be a UserWarning and nothing
+    # more, and these runs were launched under `-W ignore::UserWarning`, so the
+    # evidence that the closures were being EXTRAPOLATED was destroyed.  The
+    # record is now state on the table and is printed unconditionally here.
+    rr = sim.closures.range_report()
+    print("closure-table range: " + (rr if rr else "all queries inside the table"),
+          flush=True)
     print(f"narrow-side minimum c_bar = "
           f"{float(np.min(narrow_side_profile(geo, res.concentration))):.4f}")
     print(f"residual (c_bar < 0.5) volume fraction = "

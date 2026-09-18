@@ -104,6 +104,13 @@ class ClosureProvider(ABC):
         return (safety * (q_hi - q_lo) / span,
                 safety * (I_hi - I_lo) / span)
 
+    def range_report(self) -> str:
+        """A-3.  Non-empty when this provider was asked for a state outside the
+        region where it is valid, so a run script can print it and no result can
+        be quoted without it.  Closed-form providers are valid everywhere on
+        0 <= c <= 1 and return the empty string."""
+        return ""
+
     def wavespeed_nodes(self):
         """
         Interior concentrations at which |dq0/dc| or |dI3/dc| can peak.
@@ -268,6 +275,10 @@ class TabulatedClosures(ClosureProvider):
         wavespeeds need, and this costs one interpolation instead of eight."""
         return self.table.derivative_bounds(c, H=H, umag=self._umag(umag, c),
                                             gb=self.gb)
+
+    def range_report(self) -> str:
+        """A-3: pass the table's unsuppressible out-of-range record through."""
+        return self.table.range_report()
 
     def wavespeed_nodes(self):
         """The table's own c nodes.  Between them the interpolant is linear, so
