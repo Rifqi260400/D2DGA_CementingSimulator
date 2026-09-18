@@ -228,15 +228,30 @@ comparison … threshold-free, unlike `t_br`".
 **New: which mesh direction drives it.** BENCH-09 refined both together, so it
 could not say. Refining one at a time (this session):
 
-| `n_phi` | `n_xi` | `t_br@0.01` | `η_E` |
+| `n_phi` | `n_xi` | `η_E` | change |
 |---|---|---|---|
-| 20 | 200 | 0.0409 | 0.3657 |
-| 40 | 200 | 0.0456 | **0.3939** |
-| 80 | 200 | *(see `gate_status.md`)* | |
-| 20 | 400 | | |
+| 20 | 200 | 0.3657 | — |
+| 40 | 200 | 0.3939 | **+0.0282** |
+| 80 | 200 | 0.4773 | **+0.0834** |
+| 20 | 400 | *(running at the stop point — see `docs/gate_status.md`)* | |
 | 20 | 800 | | |
 
-`η_E` moves **+7.7 % on azimuthal refinement alone**, at fixed `n_xi`.
+**The increments are growing, not shrinking — they nearly triple on the second
+halving of `Δφ`.** That is not a converging sequence, and it is the strongest
+result of this remediation: `η_E` for ZF22 case 1 has **no azimuthal mesh
+limit**. Each refinement admits a narrower, faster finger, and `η_E` climbs
+(towards, but with no reason to stop at, ZF22's 0.66).
+
+This confirms the BENCH-10 reading independently of BF25: an analytically
+Muskat-unstable base state produces a finger whose width is set by the mesh, so
+`η_E` at a fixed time is not a converged functional of it. `BENCH-09`'s claim
+"(i) it is mesh-converged" is **false**, and false in the one direction it never
+tested.
+
+⚠️ The `t_br` column of that study is **discarded**: it was run with
+`record_every = 200`, and finding **R-1** below shows `breakthrough_at` depended
+on exactly that setting. `η_E` is computed from the final concentration field
+and is unaffected, and `η_E` is the quantity A-5 is about.
 
 **New: an analytic reason, from the paper.** BF25 §3.3's Muskat criterion
 (BENCH-10 above) classifies **case 1 as the only Muskat-unstable case of the
@@ -308,7 +323,7 @@ half-order result above bounds the `t_br` error without needing that run; it doe
 
 ---
 
-## B-1 — the closure table assumes `ū ∥ G̃_b` — **REPRODUCED, prose corrected, bound measured**
+## B-1 — the closure table assumes `ū ∥ G̃_b` — **REPRODUCED, and it is worse than the audit found: upgraded MINOR → MAJOR**
 
 `d2dga/gapscale/tables.py`'s module docstring claimed the angle axis "collapses"
 for a vertical well because `G̃_b` is purely axial. **That is wrong**: `G̃_b`
@@ -327,9 +342,59 @@ reduction. Corrected in the docstring, with the measured size (K-GEP-1 pair,
 | 5 | +0.1 % | +0.1 % | +0.0 % | −0.3 % |
 | 50 | +0.6 % | +1.4 % | +0.1 % | **−2.6 %** |
 
-The production run reached `\|ū\| = 75`, so ~3 % on `𝓘₃` is the operating error.
-`NUM-14` already refuses `β ≠ 0`, where a second angle appears; this is about
-`β = 0`, where the approximation is live and was undocumented.
+The production run reached `|ū| = 75`, so ~3 % on `𝓘₃` is the operating error
+**for that pair**.
+
+### The audit under-measured this. It is O(1) for a general pair.
+
+The audit measured only the K-GEP-1 pair, which is a benign corner in two
+independent ways: its displaced fluid is **water** (Newtonian, no yield stress),
+and `b·𝓘₁ ≈ 1500` makes buoyancy dominate the stress so the angle barely enters.
+Re-measured on a pair with a **yield stress in both fluids**
+(`κ = 0.45/0.25`, `n = 0.6/0.8`, `τ_Y = 0.30/0.12`, `g_b = 25`), the `θ = 90°`
+closures differ from the stored `θ = 0` ones by:
+
+| `c̄` | `\|ū\|` | `𝓘₁` | `𝓘₂` | `q₀` | `𝓘₃` |
+|---|---|---|---|---|---|
+| 0.25 | 5 | +4.9 % | +40.7 % | +8.7 % | −17.2 % |
+| 0.75 | 5 | **+42.5 %** | **+134.0 %** | +7.1 % | **−93.9 %** |
+| 0.25 | 50 | +3.6 % | +41.7 % | +8.0 % | **−106.5 %** |
+| 0.75 | 500 | −0.2 % | +1.4 % | +0.2 % | −0.0 % |
+
+**These are O(1) errors on the closures, not corrections.** The mechanism is the
+yield stress: whether material yields at all is set by `|τ|`, and `|τ|` depends
+on the angle, so the unyielded fraction — and hence `𝓘₁`, an integral of the
+fluidity — moves sharply. The dependence is also **non-monotone in `|ū|`**: it
+peaks where the pressure-driven and buoyancy-driven stress scales are
+comparable and falls again once `|ū|` dominates, so a single "small `|ū|`"
+caveat would not have caught it.
+
+**Why no gate caught it: every benchmark in this repository is Newtonian,** and
+for a Newtonian pair there is *no* angle dependence at all — `η` is constant, so
+rotating `ū` relative to `G̃_b` changes the stress direction and nothing else.
+Measured: angle sensitivity `< 1e-6` for a Newtonian pair against `> 0.5` for
+the yield-stress pair. That is asserted as a test, because it is the reason the
+assumption looked safe for twenty years of published cases.
+
+**Remediation (diagnostic, not a fix).** A fifth axis is the fix and is a new
+capability, which the brief forbids. Instead, `ClosureTable.build()` now
+**measures the angle sensitivity for its own fluid pair** (18 extra
+augmented-Lagrangian solves against 4 743 for the table itself) and
+`assumption_report()` states it with a verdict — "benign" below 5 %, otherwise
+"LARGE — the θ = 0 table is not valid for this pair". `scripts/kgep1_run.py`
+prints it unconditionally, the same pattern as the A-3 range record. A table
+that is not valid for its pair now says so on every run instead of being
+silently wrong.
+
+**K-GEP-1's reported numbers are not affected** — the 2.6 % figure was measured
+directly on that pair — but the table design is not generally valid, and that is
+now recorded where it cannot be missed.
+
+**Tests.** `test_b1_angle_assumption_is_bounded` (measures the O(1) deviations
+and the non-monotonicity), `test_b1_build_measures_and_reports_the_angle_sensitivity`
+(the verdict must say "not valid for this pair"), and
+`test_b1_newtonian_pair_has_no_angle_sensitivity` (the reason it was missed).
+All three fail against the old code.
 
 ---
 
@@ -376,3 +441,34 @@ thresholds (0.0200 and 0.0031 against 0.08 and 0.05), so the *classification*
 "not dispersive" is robust; the *numbers* are not established to better than the
 tip error, which is not quantified. `NUM-03` (closure-table resolution) remains
 **pending** and this is part of why.
+
+---
+
+## R-1 — `breakthrough_at` depended on the logging frequency — **found during remediation, not in the audit**
+
+`RunResult.breakthrough_at` and `efficiency_at` interpolate the **recorded**
+history, and `record_every` sub-sampled that history. So a reported physical
+quantity depended on an output setting. Measured on ZF22 case 1 while re-running
+it here: `t_br@0.01` = **0.0409** at `record_every = 200` against **0.0537** at
+`record_every = 1` — a **31 %** difference on a headline number, from a logging
+option.
+
+The hazard was already known in the same function: `run`'s internal `t_br`
+detector carries the comment *"taking the recorded one would make t_br depend on
+the output frequency"* and interpolates between **steps**. The fix was applied
+there and never to the accessor.
+
+**Fix.** The scalar history (`times`, `effs`, `outlet`) is appended on every step
+regardless of `record_every`; ~2 MB over a 10⁵-step run. `record_every` now
+governs only the expensive part — the `StepReport` list and the `on_step`
+callback, which sees the whole concentration field.
+
+**No previously reported number moves.** `scripts/zf22_table3.py` and
+`scripts/kgep1_run.py` both already ran with `record_every = 1`, and the K-GEP-1
+checkpoint holds a full-length history (85 475 samples for 85 474 steps). What
+was affected is any *diagnostic* run using `record_every > 1` — including the
+case-1 mesh study above.
+
+**Test.** `test_r1_breakthrough_does_not_depend_on_the_logging_frequency`
+asserts bit-identical `t_br` and efficiency across `record_every ∈ {1, 7, 50, 0}`.
+Verified to fail against the previous commit.

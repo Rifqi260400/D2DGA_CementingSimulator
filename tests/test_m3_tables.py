@@ -264,7 +264,9 @@ def test_b1_angle_assumption_is_bounded(hb_pair):
     unmeasured.
 
     It is a bound, not a fix.  The fix is a fifth axis, which NUM-14 already
-    describes for beta != 0.
+    describes for beta != 0.  `ClosureTable._measure_angle_sensitivity` runs the
+    same probe at build time and `assumption_report()` states the result, so no
+    table can be used without its own number attached.
     """
     from d2dga.gapscale.al_solver import TwoLayerGapSolver
     from d2dga.gapscale.closures import closures_from_solution
@@ -291,10 +293,53 @@ def test_b1_angle_assumption_is_bounded(hb_pair):
                     dev = max(dev, abs(a - b) / max(abs(b), 1e-30))
         worst[u] = dev
 
-    # the assumption is exact in the buoyancy-dominated limit and degrades as
-    # |u_bar| grows against gb -- assert both halves, so neither can drift
-    assert worst[0.5] < 5e-3, worst
-    assert worst[5.0] < 3e-2, worst
-    assert worst[0.5] < worst[50.0] < worst[500.0], worst
-    # and the bound at the top of the range tested here, stated explicitly
-    assert worst[500.0] < 0.60, worst
+    # MEASURED, and it is not small.  The audit put this at "up to 2.6% on I3",
+    # but that was the K-GEP-1 pair -- Newtonian displaced fluid, and
+    # b*I1 ~ 1500 so buoyancy dominates the stress and the angle barely enters.
+    # For a pair with a YIELD STRESS IN BOTH FLUIDS the errors are O(1),
+    # because whether material yields at all depends on |tau| and |tau| depends
+    # on theta, so the unyielded fraction -- and hence I1, an integral of the
+    # fluidity -- moves sharply.  At c = 0.75, |u| = 5 the theta = 90 degree
+    # closures differ from the stored ones by I1 +42%, I2 +134%, I3 -94%.
+    assert worst[0.5] < 0.10, worst          # nearly parallel: still small
+    assert worst[5.0] > 0.50, worst          # and then it is NOT a correction
+    assert worst[50.0] > 0.50, worst
+    # non-monotone in |u|: it peaks where the two stress scales are comparable
+    # and falls again once |u_bar| dominates, which is why a single "small
+    # |u_bar|" caveat would not have caught it
+    assert worst[500.0] < worst[5.0], worst
+
+
+def test_b1_build_measures_and_reports_the_angle_sensitivity(hb_pair):
+    """
+    B-1.  The measurement above is only useful if every table carries it.
+    `build()` runs the probe and `assumption_report()` states it; for a pair
+    with a yield stress in both fluids the verdict must say so out loud.
+
+    Against the old code this fails with AttributeError: neither the
+    measurement nor the accessor existed.
+    """
+    f1, f2 = hb_pair
+    tab = ClosureTable(f1, f2, c_grid=np.linspace(0.0, 1.0, 11),
+                       umag_grid=np.array([0.5, 5.0, 50.0]),
+                       gb_grid=np.array([25.0]), n_y=120, tol=1e-8).build()
+    assert np.isfinite(tab.angle_sensitivity)
+    assert tab.angle_sensitivity > 0.5, tab.angle_sensitivity_detail
+    rep = tab.assumption_report()
+    assert "angle sensitivity (B-1)" in rep
+    assert "not valid for this pair" in rep, rep
+
+
+def test_b1_newtonian_pair_has_no_angle_sensitivity():
+    """The other half, and the reason the assumption was defensible for every
+    PUBLISHED case: for a Newtonian pair eta is constant, so rotating u_bar
+    relative to G~_b changes the stress direction and nothing else.  Every
+    benchmark in this repository is Newtonian, which is why no gate caught
+    B-1."""
+    f = ScaledFluid("newt", 1.0, 1.0, 1.0, 0.0)
+    f2 = ScaledFluid("newt2", 1.0, 0.2, 1.0, 0.0)
+    tab = ClosureTable(f, f2, c_grid=np.linspace(0.0, 1.0, 6),
+                       umag_grid=np.array([0.5, 5.0, 50.0]),
+                       gb_grid=np.array([25.0]), n_y=120, tol=1e-9).build()
+    assert tab.angle_sensitivity < 1e-6, tab.angle_sensitivity_detail
+    assert "benign" in tab.assumption_report()

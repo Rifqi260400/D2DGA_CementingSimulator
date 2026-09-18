@@ -222,6 +222,11 @@ def main():
           f"{sim.transport.outlet_import / capacity:.5f} volumes "
           f"({100 * sim.transport.outlet_import / capacity / args.volumes:+.3f}% "
           f"of the job); expect it to halve when n_xi doubles", flush=True)
+    # B-1.  The closure table stores the theta = 0 slice (u_bar parallel to
+    # G~_b).  For a Newtonian pair that is exact; for a yield-stress pair it can
+    # be an O(1) error.  The table measures it for ITS OWN fluid pair at build
+    # time, and it is printed here so no number can be quoted without it.
+    print(tab.assumption_report(), flush=True)
     rr = sim.closures.range_report()
     print("closure-table range: " + (rr if rr else "all queries inside the table"),
           flush=True)

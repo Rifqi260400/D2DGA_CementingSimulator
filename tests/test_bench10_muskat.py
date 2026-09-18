@@ -67,19 +67,42 @@ def test_bench10_leading_edge_criterion_reproduces_bf25_m_equals_1_5(m):
     preference.
 
     At b = 0 the finger velocity (3.12) collapses to the mobility ratio
-    I1(1)/I1(c0) -> m as c0 -> 0, and the front's leading wave (3.8) travels at
-    q0'(0) = 3/2.  So
+    I1(1)/I1(c0) -> m as c0 -> 0, so
 
-        Delta_w(0+) = m - 3/2
+        Delta_w(0+) = m - w_f(0+)
 
-    and the finger penetrates exactly when m > 3/2.  BF25 Section 3.2 gives
-    3/2 as `M_3^min`, attributing it to Lajeunesse et al. (1999), from a
-    completely different argument.  Recovering their number from (3.12) is
-    independent evidence that I1 and the q0 derivative are both right.
+    and the leading wave speed w_f(0+) is where BF25's own threshold lives.
+    For m <= 3/2 the flux q0 is concave, the front DISPERSES, and the leading
+    wave is the characteristic q0'(0) = 3/2 exactly.  For m > 3/2 it is not:
+    the upper concave envelope leaves the origin along a chord, the leading
+    wave is a SHOCK, and w_f(0+) = max_c q0(c)/c > 3/2.  That transition at
+    m = 3/2 is BF25 Section 3.2's `M_3^min`, attributed there to Lajeunesse
+    et al. (1999) from an entirely different argument.
+
+    So the criterion reproduces the paper in three separate ways, all asserted
+    here: w_f(0+) = 3/2 exactly below the threshold and strictly above it after;
+    Delta_w(0+) = m - 3/2 exactly below it; and the SIGN of Delta_w(0+) flips at
+    m = 3/2 for every m.  Recovering 3/2 from (3.12) is independent evidence
+    that I1 and the q0 derivative are both right.
+
+    (An earlier version of this test asserted Delta_w = m - 3/2 for all m and
+    failed at m = 3 and m = 5.  That was the test being wrong, not the code:
+    above the threshold the leading wave is a shock and the equality does not
+    hold.  The claim is corrected, not the tolerance.)
     """
-    dw = dw_at_leading_edge(*_newt(m), 0.0, c0=1e-6)
-    assert abs(dw - (m - 1.5)) < 2e-4, (dw, m - 1.5)
-    assert (dw > 0) == (m > 1.5)
+    I1, I2, q0, I3 = _newt(m)
+    wf0 = float(front_speed(q0, I3, [1e-6], 0.0)[0])
+    if m <= 1.5:
+        assert abs(wf0 - 1.5) < 1e-5, (m, wf0)          # dispersive
+    else:
+        assert wf0 > 1.5 + 1e-6, (m, wf0)               # frontal shock
+        assert abs(wf0 - float(np.max(q0(np.linspace(1e-9, 1, 200001))
+                                      / np.linspace(1e-9, 1, 200001)))) < 1e-4
+
+    dw = dw_at_leading_edge(I1, I2, q0, I3, 0.0, c0=1e-6)
+    if m <= 1.5:
+        assert abs(dw - (m - 1.5)) < 2e-4, (dw, m - 1.5)
+    assert (dw > 0) == (m > 1.5), (m, dw)
 
 
 # ------------------------------------------------------ ZF22, all ten cases ---
@@ -186,3 +209,55 @@ def test_bench10_kgep1_is_muskat_stable_on_the_tabulated_hb_path():
     assert dw < -10.0, dw
     regime, dwv, _ = classify(I1, I2, q0, I3, gb, n=101, c0_max=0.9)
     assert regime == "stable", (regime, dwv.min(), dwv.max())
+
+
+# --------------------------------------------------- A-4.1, made quantitative ---
+def test_a41_five_of_the_ten_zf22_cases_cannot_discriminate():
+    """
+    A-4.1.  The audit observed that half the ZF22 suite is "buoyancy-saturated",
+    so agreement there does not discriminate.  That was an impression; this
+    measures it.
+
+    For each case, the EXACT 1-D entropy solution (upper concave envelope of
+    f = q0 + b I3, evaluated at t = 1.2 volumes) gives eta_E as a function of b
+    with no solver involved.  Its logarithmic sensitivity |d eta_E / d ln b| is
+    how much the published eta_E constrains the model:
+
+        case    b_ZF22    eta_1D    |d eta / d ln b|
+          1       -50     0.5593        0.382
+          8        10     0.8640        0.038
+          6       100     0.9413        0.028
+          7        10     0.9047        0.019
+          3        10     0.9233        0.016
+          2,5,9,10 100    0.9607        0.014
+          4      1000     0.9840        0.007
+
+    So for cases 2, 4, 5, 9 and 10 a **doubling of b** would move eta_E by less
+    than 0.01 -- comfortably inside the +-0.025 agreement the reproduction
+    claims.  Those five cases are consistent with almost any buoyancy treatment
+    and cannot be cited as evidence for this one.
+
+    And the sharp end of it: case 1 is TEN TIMES more discriminating than the
+    next best case and fifty times more than the weakest -- and case 1 is the
+    one that does not reproduce (BLOCKED.md BLK-6).
+    """
+    from tests.benchmarks.entropy_solution import exact_eta, similarity
+
+    cg = np.linspace(0.0, 1.0, 200001)
+
+    def sensitivity(case):
+        def eta(bz):
+            b = zf22_buoyancy_to_bf25(bz, case.m)
+            sn, un = similarity(cg, nwt.q0(cg, case.m)
+                                + b * nwt.script_I3(cg, case.m))
+            return exact_eta(1.2, 1.0, sn, un)
+        return abs(eta(case.b * 1.1) - eta(case.b / 1.1)) / (2 * np.log(1.1))
+
+    sens = {cs.case: sensitivity(cs) for cs in CASES}
+
+    # the five saturated cases: a doubling of b moves eta_E by < 0.01
+    for k in (2, 4, 5, 9, 10):
+        assert sens[k] * np.log(2.0) < 0.010, (k, sens[k])
+    # case 1 is an order of magnitude more discriminating than anything else
+    others = max(v for k, v in sens.items() if k != 1)
+    assert sens[1] > 10.0 * others, (sens[1], others, sens)

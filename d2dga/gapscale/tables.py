@@ -114,6 +114,9 @@ class ClosureTable:
     # on every query, it cannot be switched off, and `range_report()` is
     # printed by the run scripts.  `derivative_bounds` records too; it did not
     # even warn before.
+    angle_sensitivity: float = field(default=float("nan"), init=False)
+    angle_sensitivity_detail: dict = field(default_factory=dict, init=False,
+                                           repr=False)
     n_range_queries: int = field(default=0, init=False)
     n_range_points_out: dict = field(default_factory=dict, init=False)
     worst_excursion: dict = field(default_factory=dict, init=False, repr=False)
@@ -162,9 +165,11 @@ class ClosureTable:
             cl = self._solve_one(solver, c, H, umag, gb)
             for k in out:
                 out[k][idx] = getattr(cl, k)
+        self._measure_angle_sensitivity(solver)
         if verbose:
             print(f"built {self.n_points} points, {self.n_failed} unconverged, "
                   f"r = {self.tuned_r:g}")
+            print(self.assumption_report())
 
         self._values = out
         self._dinterp = None
@@ -175,6 +180,70 @@ class ClosureTable:
             for k, v in out.items()
         }
         return self
+
+    def _measure_angle_sensitivity(self, solver):
+        """
+        B-1.  Every entry of this table is built with u_mean and G~_b PARALLEL
+        (`_solve_one` passes u_mean = [0, umag] against Gb = [0, gb*H]).  The
+        real flow has theta = angle(u_bar, G~_b) != 0 whenever v_bar != 0, i.e.
+        whenever the front is tilted.  BF25 (2.8)-(2.10) make the gap-scale
+        stress a 2-vector with eta_k = eta_k(|tau_k|), so all four closures
+        depend on theta.
+
+        For a NEWTONIAN pair there is no dependence at all -- eta is constant,
+        so only |tau| direction changes and the closures do not.  For a
+        YIELD-STRESS pair the dependence is not small: whether material yields
+        at all is set by |tau|, and |tau| depends on theta, so the unyielded
+        fraction -- and therefore I1, which is an integral of the fluidity --
+        moves sharply.  Measured on a pair with a yield stress in both fluids
+        (kappa 0.45/0.25, n 0.6/0.8, tau_Y 0.30/0.12, gb = 25), the theta = 90
+        degree closures differ from the stored theta = 0 ones by up to
+
+            I1 +42%,  I2 +134%,  q0 +8.7%,  I3 -107%
+
+        -- O(1), not a correction.  On the K-GEP-1 pair, where the displaced
+        fluid is Newtonian and b*I1 ~ 1500 makes buoyancy dominate, the same
+        measurement gives at most 2.6% on I3.  So the assumption is benign for
+        THAT pair and not in general, which is exactly why it is measured here
+        per table rather than argued once.
+
+        This is a diagnostic, not a fix.  The fix is a fifth axis (the angle),
+        which NUM-14 already describes for the beta != 0 case.
+        """
+        probe_c = (0.25, 0.5, 0.75)
+        gb_axis = self._axes[3][1]
+        gb = float(gb_axis[np.argmax(np.abs(gb_axis))])
+        u_axis = self._axes[2][1]
+        probe_u = sorted({float(u_axis[0]), float(np.median(u_axis)),
+                          float(u_axis[-1])})
+        worst, detail = 0.0, {}
+        for u in probe_u:
+            local = 0.0
+            for c in probe_c:
+                ref = closures_from_solution(solver.solve_fixed_mean_velocity(
+                    c, [0.0, u], [0.0, gb]))
+                rot = closures_from_solution(solver.solve_fixed_mean_velocity(
+                    c, [u, 0.0], [0.0, gb]))
+                for a, b in ((rot.I1, ref.I1), (rot.I2, ref.I2),
+                             (rot.q0, ref.q0), (rot.I3, ref.I3)):
+                    local = max(local, abs(a - b) / max(abs(b), 1e-30))
+            detail[u] = local
+            worst = max(worst, local)
+        self.angle_sensitivity = worst
+        self.angle_sensitivity_detail = detail
+
+    def assumption_report(self) -> str:
+        """B-1.  One line stating how far the theta = 0 assumption is from the
+        truth for THIS fluid pair, so no result can be quoted without it."""
+        if not np.isfinite(self.angle_sensitivity):
+            return "angle sensitivity (B-1): not measured (table was loaded, " \
+                   "not built)"
+        d = "  ".join(f"|u|={u:g}: {v:.1%}"
+                      for u, v in sorted(self.angle_sensitivity_detail.items()))
+        verdict = ("benign" if self.angle_sensitivity < 0.05
+                   else "LARGE -- the theta = 0 table is not valid for this pair")
+        return (f"angle sensitivity (B-1): worst "
+                f"{self.angle_sensitivity:.1%} [{verdict}]\n  {d}")
 
     def _solve_one(self, solver, c, H, umag, gb) -> Closures:
         """
@@ -212,6 +281,10 @@ class ClosureTable:
             raise RuntimeError("build() first")
         np.savez_compressed(
             path, tuned_r=self.tuned_r, n_failed=self.n_failed,
+            angle_sensitivity=self.angle_sensitivity,
+            angle_u=np.array(sorted(self.angle_sensitivity_detail)),
+            angle_dev=np.array([self.angle_sensitivity_detail[k] for k in
+                                sorted(self.angle_sensitivity_detail)]),
             **{f"axis_{n}": a for n, a in self._axes},
             **{f"val_{k}": v for k, v in self._values.items()})
         return path
@@ -232,6 +305,11 @@ class ClosureTable:
         self._values = {k: z[f"val_{k}"] for k in ("I1", "I2", "q0", "I3")}
         self.tuned_r = float(z["tuned_r"])
         self.n_failed = int(z["n_failed"])
+        if "angle_sensitivity" in z.files:
+            self.angle_sensitivity = float(z["angle_sensitivity"])
+            self.angle_sensitivity_detail = dict(zip(
+                [float(x) for x in z["angle_u"]],
+                [float(x) for x in z["angle_dev"]]))
         self._dinterp = None
         pts = tuple(a for _, a in self._axes)
         self._interp = {

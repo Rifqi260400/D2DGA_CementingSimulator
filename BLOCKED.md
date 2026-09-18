@@ -122,10 +122,12 @@ is no statement of what M0-T5 was supposed to assert.
 
 **What this session added.**
 
-5. *Mesh convergence was never established for `η_E`* (A-5). It moves +12.8 %
-   over the refinement BENCH-09 used, and **+7.7 % on azimuthal refinement
-   alone** at fixed `n_xi`. BENCH-09's claim "(i) it is mesh-converged" is
-   correct for `t_br` and false for `η_E`.
+5. *Mesh convergence was never established for `η_E`, and it does not hold*
+   (A-5). At fixed `n_xi = 200`, azimuthal refinement gives
+   `η_E` = 0.3657 → 0.3939 → **0.4773** for `n_phi` = 20 → 40 → 80. **The
+   increments grow — +0.028 then +0.083 — so the sequence is diverging, not
+   converging.** BENCH-09's claim "(i) it is mesh-converged" is correct for
+   `t_br` and false for `η_E`, in the one direction it never refined.
 6. *An analytic reason, from the paper.* BF25 §3.3's Muskat criterion
    (gate **BENCH-10**, added this session) classifies **case 1 as the only
    Muskat-unstable case of the ten**: `Δw(0⁺) = +0.97` against `−1.96 … −162.9`
@@ -147,11 +149,12 @@ two significant figures.
 **Evidence that would distinguish the remaining possibilities**, in order of
 value:
 
-* A φ-refinement sequence to `n_phi = 160` at fixed `n_xi`. If `η_E` keeps
-  climbing without a plateau, the functional is not converged and no agreement
-  should be expected. If it plateaus below 0.66, something structural differs.
-  *(Started this session; `n_phi = 80` was still running at the stop point —
-  see `docs/gate_status.md` for what actually completed.)*
+* ~~A φ-refinement sequence at fixed `n_xi`.~~ **Done this session, and it
+  answers the question:** `η_E` climbs with growing increments through
+  `n_phi` = 20, 40, 80 (0.3657, 0.3939, 0.4773). The functional is not
+  converged and **no agreement with a fixed-time `η_E` should be expected** for
+  this case. What remains open is only whether ZF22's own computation was
+  equally mesh-dependent, which their paper does not report.
 * Running the full annulus with azimuthal periodicity instead of the
   half-annulus symmetry (`assumptions.md` NUM-05/Q6). ZF22 §5 notes periodicity
   permits azimuthal asymmetry. This is the one structural choice never tested
