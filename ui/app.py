@@ -163,6 +163,86 @@ st.markdown("")
 
 
 # --------------------------------------------------------------------------
+# fluid pair and the B-1 disclaimer
+#
+# Placed here, above every number, because it governs how all of them may be
+# read.  Two separate statements, deliberately not merged:
+#
+#   * PROVENANCE -- is this the fluid pair every published number in the repo
+#     was computed with?  `FluidsConfig.departures_from_validated` answers that
+#     from the config's own fields.
+#   * MEASUREMENT -- how far the closure table's theta = 0 slice is from the
+#     truth for THIS pair.  Only the table knows, and only if it was built
+#     rather than loaded, so it is read from the run's metrics.json and shown as
+#     unavailable when the run did not record it.  It is never estimated here.
+#
+# The second is what actually licenses a result, which is why a run with no
+# measurement gets a warning and not a green tick.
+# --------------------------------------------------------------------------
+_cfg_fluids = runs.build_config(run).fluids
+_dep = _cfg_fluids.departures_from_validated()
+_ang = (run.metrics or {}).get("closure_table_assumption_report")
+
+fl_a, fl_b = st.columns([1.0, 1.0], gap="medium")
+with fl_a:
+    mud_f, cem_f = _cfg_fluids.as_fluids()
+    panel("Fluid pair",
+          kv("Displaced", f"{mud_f.name}")
+          + kv("&nbsp;&nbsp;ρ&#770;, κ&#770;, n, τ&#770;<sub>Y</sub>",
+               f"{mud_f.density:g} &middot; {mud_f.consistency:g} &middot; "
+               f"{mud_f.power_law_index:g} &middot; {mud_f.yield_stress:g}")
+          + kv("Displacing", f"{cem_f.name}")
+          + kv("&nbsp;&nbsp;ρ&#770;, κ&#770;, n, τ&#770;<sub>Y</sub>",
+               f"{cem_f.density:g} &middot; {cem_f.consistency:g} &middot; "
+               f"{cem_f.power_law_index:g} &middot; {cem_f.yield_stress:g}"),
+          "kg/m³ &middot; Pa s<sup>n</sup> &middot; – &middot; Pa"
+          + ("" if run.config_source == runs.RECORDED
+             else " &mdash; from the current config.py, not recorded"))
+
+with fl_b:
+    if _dep:
+        st.markdown(
+            '<div class="bad"><strong>Not the validated fluid pair.</strong> '
+            'Every figure in <code>AUDIT_REPORT.md</code>, '
+            '<code>docs/gate_status.md</code> and '
+            '<code>output/kgep1_results.md</code> was computed with the '
+            'Materials 2025 Table 1 pair. This run differs in: <code>'
+            + '</code>, <code>'.join(_dep) +
+            '</code>. Those figures do not describe this run.</div>',
+            unsafe_allow_html=True)
+    if _ang:
+        _worst = _ang.splitlines()[0]
+        _cls = ("good" if "[benign]" in _worst
+                else "bad" if "LARGE" in _worst else "warn")
+        st.markdown(
+            f'<div class="{_cls}"><strong>Closure-table angle assumption '
+            f'(B-1), measured for this pair:</strong><br>'
+            f'<code>{_worst}</code><br>'
+            f'Every table entry is built with u&#772; parallel to '
+            f'G&#771;<sub>b</sub> (θ = 0); the real flow has θ ≠ 0 wherever the '
+            f'front is tilted. The figure is an <em>upper bound</em> on the '
+            f'angle error — θ = 0 against θ = 90° — not the error in η<sub>E</sub>. '
+            f'The fix is a fifth table axis (NUM-14), not a correction factor.'
+            f'</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div class="warn"><strong>Closure-table angle assumption (B-1): '
+            'not measured for this run.</strong> The θ = 0 assumption\'s error '
+            'is a property of the fluid pair <em>and of the table\'s velocity '
+            'axis</em>, and is only known when the table is <em>built</em>; this '
+            'run recorded no <code>metrics.json</code>, so the number does not '
+            'exist and is not guessed here. Rebuilt on the production axes, the '
+            'shipped water/cement pair measures <strong>9.8% — SIGNIFICANT, not '
+            'benign</strong>, peaking at |u&#772;| = 3000 where the front is most '
+            'tilted. That had never been measured on those axes before, because '
+            'the production runs loaded a cached table and a loaded table reports '
+            '"not measured". Re-run with a fresh table to record it.</div>',
+            unsafe_allow_html=True)
+
+st.markdown("")
+
+
+# --------------------------------------------------------------------------
 # the mandated pairing: field beside its validity envelope
 # --------------------------------------------------------------------------
 col_field, col_num = st.columns([1.05, 1.0], gap="medium")

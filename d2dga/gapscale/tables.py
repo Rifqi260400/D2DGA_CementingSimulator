@@ -190,22 +190,59 @@ class ClosureTable:
         stress a 2-vector with eta_k = eta_k(|tau_k|), so all four closures
         depend on theta.
 
-        For a NEWTONIAN pair there is no dependence at all -- eta is constant,
-        so only |tau| direction changes and the closures do not.  For a
-        YIELD-STRESS pair the dependence is not small: whether material yields
-        at all is set by |tau|, and |tau| depends on theta, so the unyielded
-        fraction -- and therefore I1, which is an integral of the fluidity --
-        moves sharply.  Measured on a pair with a yield stress in both fluids
-        (kappa 0.45/0.25, n 0.6/0.8, tau_Y 0.30/0.12, gb = 25), the theta = 90
+        For a pair in which BOTH fluids are Newtonian there is no dependence at
+        all -- eta is constant, so only the direction of |tau| changes and the
+        closures do not.  Measured: exactly 0.00% at m = 0.0017 and m = 0.033.
+        Once EITHER fluid has a yield stress the dependence is not small:
+        whether material yields at all is set by |tau|, and |tau| depends on
+        theta, so the unyielded fraction -- and therefore I1, an integral of the
+        fluidity -- moves sharply.  On a pair with a yield stress in both fluids
+        (kappa 0.45/0.25, n 0.6/0.8, tau_Y 0.30/0.12, gb = 25) the theta = 90
         degree closures differ from the stored theta = 0 ones by up to
 
             I1 +42%,  I2 +134%,  q0 +8.7%,  I3 -107%
 
-        -- O(1), not a correction.  On the K-GEP-1 pair, where the displaced
-        fluid is Newtonian and b*I1 ~ 1500 makes buoyancy dominate, the same
-        measurement gives at most 2.6% on I3.  So the assumption is benign for
-        THAT pair and not in general, which is exactly why it is measured here
-        per table rather than argued once.
+        CORRECTION, 2026-09-19.  This docstring used to explain the benign
+        K-GEP-1 result by saying "the displaced fluid is Newtonian".  That
+        attribution is wrong, and AUDIT_REPORT.md B-1 repeats it.  A sweep
+        holding the mud NEWTONIAN (n = 1, tau_Y = 0) and moving only its
+        viscosity against the unchanged K-GEP-1 cement gives
+
+            kappa1 = 1 mPa s   m = 0.0063   ->   0.53%   (the shipped default)
+            kappa1 = 2 mPa s   m = 0.013    ->   2.0%
+            kappa1 = 5 mPa s   m = 0.032    ->  11.4%
+            kappa1 = 10 mPa s  m = 0.063    ->  35.7%
+            kappa1 = 20 mPa s  m = 0.127    ->  93.1%
+            kappa1 = 50 mPa s  m = 0.317    -> 168.6%
+
+        So what governs the size is m, not whether the mud is Newtonian: at
+        m ~ 0.006 the mud is ~160x thinner, so the cement's yielded structure --
+        the only theta-sensitive part -- barely feels the mud layer.  A perfectly
+        Newtonian mud at an ordinary 5 mPa s already puts B-1 at 11%.
+
+        SECOND CORRECTION, same day, and it is the sharper one.  The figures
+        above come from a probe whose velocity axis stops at |u_bar| = 10.  The
+        sensitivity GROWS with |u_bar|, and the production table's axis reaches
+        3000 -- it has to, because FLU-06 drives |u_bar| past 370.  Rebuilt on
+        the production axes (31 x 5 x 17, umag to 3000) the SHIPPED K-GEP-1 pair
+        measures
+
+            |u| = 0: 0.0%    |u| = 8.3: 0.4%    |u| = 3000: 9.8%
+
+        -- worst 9.8%, which this method's own grading calls SIGNIFICANT, not
+        benign.  It had never been measured on those axes before: the production
+        runs LOADED a cached table, and a loaded table reports "not measured".
+        No computed number moves -- this is a diagnostic -- but "benign for the
+        K-GEP-1 pair", as AUDIT_REPORT.md B-1 puts it, is not supported at the
+        resolution the runs actually use.  Quote K-GEP-1 numbers with 9.8%
+        attached, and note that |u_bar| is largest exactly where the front is
+        most tilted, which is where the angle error also peaks.
+
+        Read the number as an upper bound on the angle error, not as the error
+        in a run: it compares theta = 0 against theta = 90 degrees, and a run
+        whose front stays nearly axial never visits the worst angle.  It bounds
+        what the stored slice can be wrong by; it does not say what eta_E is
+        wrong by.  Deciding that needs the fifth axis (NUM-14), not this probe.
 
         This is a diagnostic, not a fix.  The fix is a fifth axis (the angle),
         which NUM-14 already describes for the beta != 0 case.

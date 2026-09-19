@@ -15,13 +15,31 @@ carried over from the build.
 > If a gate existed in the spec but was never given a marker, it is not listed
 > here and its absence is invisible — recorded as a limitation, not a pass.
 
-**Verdict of the run this table is built from:** `pytest tests/` -> **262 passed, 0 failed, 0 errors** (exit 0), 2026-09-18 19:24:50.
-Before this work the suite was 223 passed / 0 failed; 39 tests were added and
-none removed or skipped. No previously green gate has regressed.
+**Verdict of the run this table is built from:** `pytest tests/` -> **293 passed, 0 failed, 0 errors** (exit 0), 2026-09-19.
+Before the remediation the suite was 223 passed / 0 failed; 70 tests have been
+added since and none removed or skipped. No previously green gate has regressed.
 
-The last 8 are `tests/test_runio.py`, added with **R-2**: a checkpoint could be
+Of those, 8 are `tests/test_runio.py`, added with **R-2**: a checkpoint could be
 resumed under different physics, because `Simulation.run` checked only the grid
 shape and the checkpoint filename carries six of ~20 settings.
+
+The most recent 31 are `tests/test_m0_config.py` (M0-C1..C11), added with
+**G-1 / REM-11**: the mud may now be Herschel-Bulkley. Two of them are the ones
+to read. **M0-C9** asserts that a pair with both fluids Newtonian is
+angle-*exact* (0.00%, the one case where the θ = 0 table is not an
+approximation). **M0-C10** locks the corrected account of **B-1**: holding the
+mud strictly Newtonian and moving only its viscosity, the angle sensitivity runs
+0.53% → 11.4% → 93.1% as `m` goes 0.0063 → 0.032 → 0.127, so what makes the
+shipped pair mild is the viscosity *ratio*, not the mud's rheology — and the
+hazard therefore predates G-1 rather than being created by it.
+
+⚠️ **Read those two gates with their axis caveat.** They probe a table whose
+velocity axis stops at `|ū| = 10`. On the production axis (to 3000, which
+FLU-06 forces) the shipped pair measures **9.8% — SIGNIFICANT, not benign**.
+That had never been measured, because the production runs loaded a cached table
+and a loaded table reports `not measured`. No gate changes and no computed
+number moves, but `AUDIT_REPORT.md` B-1's "benign for the K-GEP-1 pair" is not
+supported at the resolution the runs use. See `docs/assumptions.md` FLU-07.
 
 | Gate | Test(s) | Status | Last green at |
 |---|---|---|---|

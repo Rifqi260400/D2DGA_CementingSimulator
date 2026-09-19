@@ -577,3 +577,131 @@ previous commit** with `KeyError: 'tag is not a file in the archive'`.
 
 **No previously reported number moves.** The guard only refuses; it changes no
 computation, and the three existing checkpoints are unaffected (legacy path).
+
+---
+
+## G-1 — a non-Newtonian mud, and a correction to B-1's cause — **REM-11**
+
+**Requested by the user on 2026-09-19** (UI gap G-1, raised in `ui/INVENTORY.md`
+and held until approved because it touches `config.py`). The mockup's setup
+screen offers the mud a τ̂_Y, κ̂ and n; `FluidsConfig` could not express any of
+them — `as_fluids()` wrote `n = 1` and `τ_Y = 0` as literals.
+
+### What changed
+
+`FluidsConfig` gains `mud_consistency`, `mud_power_law_index` and
+`mud_yield_stress`. The field `mud_viscosity` is **gone**, replaced by a property
+that returns κ̂ for a Newtonian mud and **raises** otherwise: a Herschel–Bulkley
+fluid has no single viscosity, and returning κ̂ (Pa·s^n) under a name that means
+Pa·s is the unit error this change exists to prevent. Nothing else read that
+field. `from_record` migrates a pre-G-1 payload (`mud_viscosity` → consistency,
+exact, since those runs were Newtonian by construction) and **raises on any key
+it does not know**, so a future field cannot be silently dropped and the
+reconstruction labelled reproduced.
+
+Both fluids are now validated at construction: ρ̂ > 0, κ̂ > 0, n ∈ (0, 1],
+τ̂_Y ≥ 0, every pumped velocity > 0. `n > 1` is *refused*, not extrapolated —
+BF25 (2.8)–(2.10) and B02 (10) derive the gap-scale closures for shear-thinning
+Herschel–Bulkley only, and nothing here is validated above 1.
+
+**No previously reported number moves.** The default pair is bit-identical,
+`repr` included — asserted by `test_m0_c1_default_fluids_are_bit_identical_to_the_pre_g1_code`,
+which reproduces the old literal construction. `repr` matters because
+`kgep1_run.make_table` hashes the scaled fluids into the closure table's cache
+key; a changed label would have invalidated every cached table.
+
+### The measurement that changed a claim
+
+G-1 was held back because a yield-stress mud puts **both** fluids in the
+yield-stress class, which is where B-1 is O(1). Measuring it produced something
+else. Holding the mud **strictly Newtonian** (n = 1, τ̂_Y = 0) and moving only
+its viscosity against the unchanged K-GEP-1 cement:
+
+| κ̂₁ | m | B-1 worst |
+|---|---|---|
+| 1 mPa·s (shipped) | 0.0063 | **0.53%** |
+| 2 mPa·s | 0.013 | 2.0% |
+| 5 mPa·s | 0.032 | **11.4%** |
+| 10 mPa·s | 0.063 | 35.7% |
+| 20 mPa·s | 0.127 | **93.1%** |
+| 50 mPa·s | 0.317 | 168.6% |
+
+And a pair in which *both* fluids are Newtonian measures **exactly 0.00%** at
+m = 0.0017 and m = 0.033.
+
+`d2dga/gapscale/tables.py` explained the benign K-GEP-1 result by saying *"the
+displaced fluid is Newtonian"*, and **`AUDIT_REPORT.md` B-1 repeats that
+wording**. It is the wrong attribution. What makes the shipped pair benign is
+that **m ≈ 0.006** — the mud is ~160× thinner, so the cement's yielded
+structure, the only θ-sensitive part, barely feels the mud layer. The mud's own
+rheology is a second-order lever on the same quantity.
+
+Two consequences, and the second is the one that decided the user's fallback
+instruction ("if the three fields don't work, go back to Newtonian-only with a
+disclaimer on screen"):
+
+1. The docstring is corrected in place, with the sweep printed in it. The audit
+   report is **not** edited — that is forbidden — so the correction lives here
+   and in `docs/assumptions.md` FLU-07.
+2. **G-1 did not create this hazard and reverting G-1 would not close it.** A
+   Newtonian mud at an ordinary 5 mPa·s — expressible before G-1 existed, by
+   editing one field that was already there — is already at 11%. Removing the
+   three fields would hide the hazard behind a field that remains. So the fields
+   stay and the **disclaimer is keyed to the measured value**, not to whether the
+   mud is Newtonian.
+
+Read the figure as an **upper bound** on the angle error: it compares θ = 0
+against θ = 90°, and a run whose front stays nearly axial never visits the worst
+angle. It bounds what the stored slice can be wrong by; it does not say what
+η_E is wrong by. That needs the fifth axis (NUM-14), not this probe.
+
+### The second correction, and it is the sharper one
+
+The sweep above uses a probe whose velocity axis stops at `|ū| = 10`. **The
+sensitivity grows with `|ū|`,** and the production table's axis reaches **3000** —
+it has to, because FLU-06 drives `|ū|` past 370. Rebuilt on the production axes
+(31 × 5 × 17, umag to 3000, 141 s) the **shipped K-GEP-1 pair** measures
+
+| `\|ū\|` | 0 | 8.3 | 3000 |
+|---|---|---|---|
+| B-1 | 0.0% | 0.4% | **9.8%** |
+
+worst **9.8%**, which this method's own grading calls **SIGNIFICANT, not
+benign**. It had never been measured on those axes before: the production runs
+**loaded a cached table**, and a loaded table reports `not measured`. So the
+audit's own diagnostic was present and silent on the very run it was written for.
+
+**No computed number moves** — this is a diagnostic, and no gate changes. What
+changes is how K-GEP-1 numbers may be quoted: `AUDIT_REPORT.md` B-1's "benign for
+the K-GEP-1 pair" is not supported at the resolution the runs actually use. The
+9.8% must travel with them, and it peaks at large `|ū|` — which is exactly where
+the front is most tilted, i.e. where θ is furthest from 0. The two errors are
+correlated, not independent.
+
+A by-product worth recording: the same production-axis build on the
+Herschel–Bulkley mud (1400 / 0.020 / 0.70 / 4.79) took **954 s and left 12 of
+935 gap solves unconverged**, against 0 for the water pair. A non-Newtonian mud
+is not only harder to justify, it is measurably harder to solve.
+
+### The disclaimer
+
+Both the CLI and the Results screen now state, before any number:
+
+* **provenance** — `FluidsConfig.departures_from_validated()` names every fluid
+  field that differs from the pair every published figure was computed with, as
+  `name: was -> is`. A screen can therefore say *which* field moved, not merely
+  that something did.
+* **measurement** — the run's own `assumption_report()`, read from
+  `metrics.json`. A run that recorded none gets a **warning, not a green tick**,
+  and the number is not guessed. The two are kept separate because only the
+  second licenses a result.
+
+### Verification
+
+`tests/test_m0_config.py`, 11 gates (M0-C1..C11): bit-identity, the refusing
+`mud_viscosity` property, validation of both fluids over 8 × 2 bad inputs, the
+derived rheology label, `from_record` round-trip and legacy migration, the
+unknown-key refusal, the angle-exact Newtonian pair, the m-sweep locking the
+corrected claim, and the named departures. M0-C10's thresholds are one-sided and
+far from the measured values (benign < 5% vs 0.53%; not-benign > 50% vs 93%) so
+the gate tests the claim rather than the solver's tolerance.

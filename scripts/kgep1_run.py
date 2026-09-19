@@ -162,6 +162,19 @@ def main():
             if f.startswith("kgep1_ckpt_"):
                 os.remove(os.path.join("output", f))
     mud, cement = cfg.fluids.as_fluids()
+    # Say it here, before any number is printed, and in the same words the UI
+    # uses: every figure in AUDIT_REPORT.md / docs/gate_status.md was computed
+    # with the Materials 2025 Table 1 pair, and a changed fluid invalidates the
+    # comparison rather than merely shifting it.  The B-1 measurement for THIS
+    # pair is printed later, from the table that was actually built.
+    print(f"fluids: {mud.name} -> {cement.name}")
+    _dep = cfg.fluids.departures_from_validated()
+    if _dep:
+        print("WARNING: not the validated fluid pair -- " + "; ".join(_dep))
+        print("         the figures in AUDIT_REPORT.md, docs/gate_status.md and "
+              "output/kgep1_results.md do NOT describe this run.")
+        print("         read the angle-sensitivity (B-1) line below before "
+              "quoting anything: it is benign for the shipped pair only.")
     sc = Scaling(mud, cement, r_a_hat_star=geo.r_a_hat_star,
                  delta_star=geo.delta_star, mean_velocity=args.w0)
     g = geo.grid

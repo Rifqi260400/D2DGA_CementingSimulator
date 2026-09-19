@@ -191,9 +191,7 @@ def build_config(run: Run):
     return Config(well=WellConfig(**c["well"]),
                   standoff=StandoffConfig(**c["standoff"]),
                   synthetic_wall=SyntheticWallConfig(**c["synthetic_wall"]),
-                  fluids=FluidsConfig(**{**c["fluids"],
-                                         "mean_velocities_m_s":
-                                             tuple(c["fluids"]["mean_velocities_m_s"])}),
+                  fluids=FluidsConfig.from_record(c["fluids"]),
                   grid=grid)
 
 

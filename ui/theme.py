@@ -32,6 +32,16 @@ AMBER_INK = "#8A5310"
 AMBER_WASH = "#FDF8F0"
 AMBER_EDGE = "#E8D3AC"
 
+# -- refusal, for a claim the run cannot support at all --------------------
+# Distinct from amber on purpose.  Amber says "outside the validated range,
+# read with care"; this says "the numbers you are about to read were computed
+# for a different problem".  One step stronger, and never used for a mere
+# absence -- an absence is `unavail`.
+RUST = "#9E3B2E"
+RUST_INK = "#7A2B20"
+RUST_WASH = "#FCF3F1"
+RUST_EDGE = "#E8C4BC"
+
 # -- concentration ---------------------------------------------------------
 MUD = "#D9C9A3"          # c_bar = 0, displaced fluid
 CEMENT = TEAL            # c_bar = 1, displacing fluid
@@ -94,6 +104,10 @@ CSS = f"""
   .good {{ background: {TEAL_WASH}; border: 1px solid {TEAL_EDGE};
            border-radius: 6px; padding: 10px 13px; font-size: 12px;
            color: {TEAL_DARK}; line-height: 1.55; }}
+  .bad {{ background: {RUST_WASH}; border: 1px solid {RUST_EDGE};
+          border-radius: 6px; padding: 10px 13px; font-size: 12px;
+          color: {MUTED}; line-height: 1.55; }}
+  .bad strong {{ color: {RUST_INK}; }}
   .unavail {{ border: 1px dashed {BORDER}; border-radius: 6px;
               padding: 16px; font-size: 12px; color: {MUTED_2};
               line-height: 1.55; background: transparent; }}

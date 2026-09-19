@@ -73,13 +73,46 @@ displacement that is a flat block — true, and useless — so a checkbox stretc
 it to the run's own range. The colour bar states which range is in use either
 way.
 
+## The fluid-pair disclaimer
+
+Above every number the screen states two things, kept separate on purpose.
+
+**Provenance** — whether these are the fluids every published figure was
+computed with. `FluidsConfig.departures_from_validated()` names each field that
+differs, as `name: was -> is`, so a reader learns *which* property moved rather
+than only that something did. A run on the shipped pair gets no banner; a run on
+anything else gets a red one saying the repository's figures do not describe it.
+
+**Measurement** — how far the closure table's `θ = 0` slice is from the truth
+for this pair (finding B-1). Only the table knows, and only when it is *built*
+rather than loaded, so the screen reads the run's own `assumption_report()` out
+of `metrics.json`. A run that recorded none gets a **warning, not a green
+tick**, and the number is never estimated.
+
+The two are not merged because only the second licenses a result, and they can
+disagree: the validated pair is not a benign pair. Measured on the production
+axes it reaches **9.8% — SIGNIFICANT by the solver's own grading** — a figure
+that had never been taken before 2026-09-19, because the production runs loaded
+a cached table and a loaded table reports `not measured`. Two things follow, and
+both are on screen: the size is governed by the viscosity ratio `m` rather than
+by whether the mud is Newtonian (a Newtonian mud at an ordinary 5 mPa·s already
+measures 11%), and the figure is an **upper bound** on the angle error —
+`θ = 0` against `θ = 90°` — not the error in `η_E`. See `docs/assumptions.md`
+FLU-07 and `docs/remediation_log.md` REM-11.
+
+Since 2026-09-19 the mud can be Herschel–Bulkley (UI gap G-1, approved by the
+user): `mud_consistency`, `mud_power_law_index`, `mud_yield_stress`. The default
+is unchanged to the bit. `mud_viscosity` is now a property that **refuses** for
+a non-Newtonian mud instead of returning κ̂ under a name that means Pa·s.
+
 ## Deviations from the mockup
 
 Listed in full, with reasons, in `ui/INVENTORY.md` §E, and the mockup itself has
-been revised to match what the solver produces. The short version: the mud
-Herschel–Bulkley fields, the snapshot slider, the similarity collapse, η_N,
+been revised to match what the solver produces. The short version: the snapshot
+slider, the similarity collapse, η_N,
 Δw_f, Pause, Snapshot and Compare/Overlay were removed because the solver has no
-data behind them; the casing OD, the pumped-volume unit, the flow-rate control,
+data behind them (the mud Herschel–Bulkley fields were on that list until
+2026-09-19 and are now real — see above); the casing OD, the pumped-volume unit, the flow-rate control,
 the validation counts and the blocked list were corrected; and the ZF23 "regime
 map" was replaced by BF25 §3.3's Muskat criterion, which exists and is
 computable from the setup inputs.
