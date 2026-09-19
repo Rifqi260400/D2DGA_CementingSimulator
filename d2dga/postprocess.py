@@ -77,6 +77,34 @@ def narrow_side_profile(geometry, c):
     return np.asarray(c, dtype=float)[-1, :]
 
 
+def narrow_side_efficiency(geometry, c, fraction=0.25):
+    """Displacement efficiency over the NARROW quarter of the annulus.
+
+    `displacement_efficiency` is a volume-weighted mean over the whole
+    annulus, and on an eccentric well it is dominated by the wide side -- the
+    part that was never in doubt.  At e = 0.3 the wide half carries most of the
+    volume, so a job that leaves a continuous mud channel on the narrow side
+    can still report eta_E above 0.99.  K-GEP-1 does exactly that: 0.9946
+    overall against a narrow-side minimum of 0.9494.
+
+    So this is the same integral restricted to the narrowest `fraction` of phi.
+    It is not a different measure of a different thing; it is the measure that
+    answers the question primary cementing is about.  `narrow_side_profile`
+    gives the single narrowest column, which is the worst case rather than an
+    average -- both are worth having, and they answer different questions.
+
+    phi runs wide (0) to narrow (1), so the narrow cells are at the end.  At
+    least one column is always included, so the function is defined on any
+    mesh.
+    """
+    g = geometry.grid
+    if not 0.0 < fraction <= 1.0:
+        raise ValueError(f"fraction must be in (0, 1], got {fraction!r}")
+    k = max(1, int(round(fraction * g.n_phi)))
+    w = cell_volume(geometry)[-k:, :]
+    return float(np.sum(w * np.asarray(c, dtype=float)[-k:, :]) / np.sum(w))
+
+
 def residual_fraction(geometry, c, threshold=0.5):
     """Volume fraction of the annulus still holding mostly displaced fluid."""
     w = cell_volume(geometry)
@@ -138,3 +166,37 @@ def zf23_metrics(geometry, c, t, n_bins=100):
     """Convenience: profile then metrics."""
     levels, w_f = front_speed_profile(geometry, c, t, n_bins)
     return dispersion_metrics(levels, w_f)
+
+
+# --------------------------------------------------------------------------
+# Discretisation error of a threshold breakthrough time (A-2)
+# --------------------------------------------------------------------------
+# A threshold front is a LEVEL SET of a front the first-order scheme smears, so
+# its error is O(dxi^(1/2)) -- half order -- while eta_E, an integral, is
+# O(dxi).  Measured against the exact rarefaction by
+# `test_a2_threshold_front_is_half_order_and_integrals_are_first_order` at
+# n_xi = 80.
+#
+# These constants lived in `scripts/kgep1_run.py` AND in the UI, which is two
+# copies of a measurement: the day the test is re-run at a finer mesh, one of
+# them silently becomes a lie.  They live here, with the other post-processing,
+# and both callers ask.
+TBR_RELATIVE_ERROR_AT_80 = {0.01: 0.175, 0.1: 0.069, 0.5: 0.033}
+TBR_ERROR_REFERENCE_N_XI = 80
+
+
+def tbr_relative_error(threshold: float, n_xi: int) -> float:
+    """Relative error to attach to a breakthrough time at this mesh.
+
+    Half-order scaling from the measured reference, so halving the error costs
+    four times the cells.  Raises for a threshold that was never measured
+    rather than interpolating between two measurements -- the whole point of
+    the number is that it is measured.
+    """
+    try:
+        ref = TBR_RELATIVE_ERROR_AT_80[threshold]
+    except KeyError:
+        raise KeyError(
+            f"no measured t_br error for threshold {threshold!r}; measured "
+            f"thresholds are {sorted(TBR_RELATIVE_ERROR_AT_80)}") from None
+    return ref * (TBR_ERROR_REFERENCE_N_XI / float(n_xi)) ** 0.5

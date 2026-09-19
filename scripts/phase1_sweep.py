@@ -101,7 +101,7 @@ def run_one(cfg, amplitude_m, wavelength_m, mode, m, b, n_phi, n_xi, cfl,
     return dict(
         skipped=None, Z=Z, delta_pi=delta_pi, wall_gradient=grad,
         e_min=float(np.min(geo.e(xi))), e_max=float(np.max(geo.e(xi))),
-        steps=res.reports[-1].n, wall=time.time() - t0,
+        steps=res.steps, wall=time.time() - t0,
         eta=displacement_efficiency(geo, res.concentration),
         t_br={th: res.breakthrough_at(th) / Z for th in THRESHOLDS},
         narrow_min=float(np.min(narrow_side_profile(geo, res.concentration))),

@@ -24,18 +24,26 @@ which of the two you are looking at, and the UI must show it.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass, field
 
 import numpy as np
 
-# `output/kgep1_ckpt_<wall>_<inflow>_<nphi>x<nxi>_w<w0>_v<volumes>.npz`
+# `output/kgep1_ckpt_<wall>_<inflow>_<nphi>x<nxi>_w<w0>_v<volumes>[_f<hash>].npz`
+#
+# The `_f<hash>` suffix is appended by `kgep1_run` when the fluids or the
+# standoff are not the shipped defaults, because two such runs otherwise write
+# to the same path.  It is OPTIONAL here on purpose: the default keeps its
+# historical name, so checkpoints recorded before the suffix existed still
+# resolve.  Leaving it out of this pattern made every non-default run
+# INVISIBLE to the interface -- the run completed, wrote its files, and simply
+# did not appear in the list.  UI-15 covers it.
 _NAME = re.compile(
     r"kgep1_ckpt_(?P<wall>synthetic|caliper)_"
     r"(?P<inflow>no_axial_gradient|uniform)_"
-    r"(?P<n_phi>\d+)x(?P<n_xi>\d+)_w(?P<w0>[\d.]+)_v(?P<volumes>[\d.]+)\.npz$")
+    r"(?P<n_phi>\d+)x(?P<n_xi>\d+)_w(?P<w0>[\d.]+)_v(?P<volumes>[\d.]+)"
+    r"(?:_f(?P<physics>[0-9a-f]{6}))?\.npz$")
 
 RECORDED = "recorded"
 RECONSTRUCTED = "reconstructed"
@@ -74,20 +82,34 @@ class Run:
     def command(self) -> str:
         """The CLI invocation that reproduces this run.
 
-        Built from the recorded arguments when they exist.  For a reconstructed
-        run only the six settings in the filename are known, so the command is
-        complete only in so far as everything else was left at its default --
-        which is exactly what `config_source` warns about.
+        Built by the LAUNCHER from the recorded arguments, so it covers every
+        parameter the runner accepts -- including the fluids.  The first
+        version listed six flags by hand and omitted `--mud-*`, which meant a
+        run on a non-default mud was shown a command that would reproduce a
+        DIFFERENT run, under the heading "reproduce from the CLI".  That is
+        worse than showing nothing.
+
+        For a RECONSTRUCTED run only the settings in the filename are known,
+        so the rest is filled from the current defaults and the line is
+        correct only if nothing has changed since -- which is exactly what
+        `config_source` warns about, and why the screen shows that warning
+        beside this command.
         """
-        a = self.args
-        parts = ["PYTHONPATH=.", "python", "scripts/kgep1_run.py",
-                 f"--wall {a['wall']}", f"--w0 {a['w0']}",
-                 f"--n-phi {a['n_phi']}", f"--n-xi {a['n_xi']}",
-                 f"--volumes {a['volumes']}", f"--inflow {a['inflow']}"]
-        for key, flag in (("cfl", "--cfl"), ("n_c", "--n-c"), ("n_h", "--n-h")):
-            if key in a:
-                parts.append(f"{flag} {a[key]}")
-        return " ".join(parts)
+        from ui import launch
+        values = {p["dest"]: p["default"] for p in launch.parameters()}
+        for p in launch.parameters():
+            if p["dest"] in self.args:
+                values[p["dest"]] = self.args[p["dest"]]
+        # a recorded payload also carries the fluids, which are not CLI args
+        # on a run that predates them
+        fluids = ((self.payload or {}).get("config") or {}).get("fluids") or {}
+        for key, val in fluids.items():
+            if key in values:
+                values[key] = val
+        standoff = ((self.payload or {}).get("config") or {}).get("standoff") or {}
+        if "eccentricity_in_gauge_hole" in standoff:
+            values["eccentricity"] = standoff["eccentricity_in_gauge_hole"]
+        return launch.shell_command(launch.argv_from(values))
 
     # -- arrays ------------------------------------------------------------
     def _load(self):

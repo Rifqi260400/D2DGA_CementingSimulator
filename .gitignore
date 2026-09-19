@@ -10,3 +10,5 @@ output/kgep1_ckpt_*.config.json
 output/kgep1_ckpt_*.metrics.json
 ui/__pycache__/
 .streamlit/
+output/gates.json
+output/ui_runs/

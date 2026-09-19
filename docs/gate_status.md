@@ -15,15 +15,40 @@ carried over from the build.
 > If a gate existed in the spec but was never given a marker, it is not listed
 > here and its absence is invisible — recorded as a limitation, not a pass.
 
-**Verdict of the run this table is built from:** `pytest tests/` -> **293 passed, 0 failed, 0 errors** (exit 0), 2026-09-19.
-Before the remediation the suite was 223 passed / 0 failed; 70 tests have been
-added since and none removed or skipped. No previously green gate has regressed.
+**Verdict of the run this table is built from:** `python tests/run_gates.py`
+-> **317 passed, 0 failed, 0 errors** (exit 0), 2026-09-19. Before the remediation the suite was
+223 passed / 0 failed; everything since has been added, and none removed or
+skipped. No previously green gate has regressed.
+
+Since 2026-09-19 the verdict is also written as data, to
+`output/gates.json`, by `tests/run_gates.py` — a pytest **plugin**, so it
+changes no collection, selection or assertion. The Validation screen reads that
+file and **refuses to fall back to this document**, because a page that quotes
+prose cannot tell you the prose is stale.
 
 Of those, 8 are `tests/test_runio.py`, added with **R-2**: a checkpoint could be
 resumed under different physics, because `Simulation.run` checked only the grid
 shape and the checkpoint filename carries six of ~20 settings.
 
-The most recent 31 are `tests/test_m0_config.py` (M0-C1..C11), added with
+`tests/test_ui_contract.py` (UI-1..17) gates the seam between the runner and
+the interface, which is where a display can quietly stop describing the thing
+it claims to describe. Three of its gates exist because of defects that were
+invisible in the source and showed up only in the rendered page or in a
+relaunch:
+
+* **UI-12/13/14** — the Validation screen's first ZF22 parser dropped case 1,
+  the only case that does not reproduce, and displayed **9 / 9**. It
+  manufactured a clean bill of health by discarding its own counter-evidence.
+* **UI-6/7** — `RunResult.steps`. Callers read `reports[-1].n`, which is short
+  by up to `record_every - 1` on every run and raises `IndexError` on a
+  relaunch of a finished one.
+* **UI-15/16** — a run with non-default fluids completed, wrote its files, and
+  was **invisible** to the interface, because the checkpoint suffix that stops
+  such runs colliding was missing from the discovery pattern.
+* **UI-17** — the "reproduce from the CLI" line omitted the fluid arguments, so
+  a run on a non-default mud was shown a command reproducing a different run.
+
+The 31 before those are `tests/test_m0_config.py` (M0-C1..C11), added with
 **G-1 / REM-11**: the mud may now be Herschel-Bulkley. Two of them are the ones
 to read. **M0-C9** asserts that a pair with both fluids Newtonian is
 angle-*exact* (0.00%, the one case where the θ = 0 table is not an

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 import time
@@ -32,12 +33,14 @@ import numpy as np
 
 sys.path.insert(0, ".")
 
-from d2dga.config import Config, GridConfig, IN_TO_M          # noqa: E402
+from d2dga.config import (Config, FluidsConfig, GridConfig,   # noqa: E402
+                          IN_TO_M, StandoffConfig)
 from d2dga.elliptic import TabulatedClosures                   # noqa: E402
 from d2dga.gapscale.tables import ClosureTable                 # noqa: E402
 from d2dga.geometry import CaliperLogWall, build_geometry      # noqa: E402
 from d2dga.postprocess import (cell_volume, displacement_efficiency,  # noqa: E402
-                               narrow_side_profile, residual_fraction,
+                               narrow_side_efficiency, narrow_side_profile,
+                               residual_fraction, tbr_relative_error,
                                zf23_metrics)
 from d2dga import runio                                        # noqa: E402
 from d2dga.scaling import Scaling                              # noqa: E402
@@ -135,7 +138,73 @@ def build_parser() -> argparse.ArgumentParser:
                     help="bottom-hole condition, assumptions.md NUM-04.  B02 "
                          "(70) permits backflow through the shoe; a real shoe "
                          "does not, which is what 'uniform' forbids.")
+    ap.add_argument("--status-json", default=None, metavar="PATH",
+                    help="rewrite this file with live progress every ~1.5 s "
+                         "(atomic), so a monitor outside the process can read "
+                         "it.  Purely additive: it is written from the existing "
+                         "on_step hook and changes no computation.")
+
+    # Fluids and standoff.  These used to live only in config.py, which meant a
+    # UI could not launch a run on anything but the defaults without editing a
+    # source file -- and then the run would not be reproducible from the command
+    # line, which the build spec requires.  Defaults are READ FROM the
+    # dataclasses, so nothing is restated here.
+    fl = ap.add_argument_group(
+        "fluids", "Herschel-Bulkley: tau = tau_Y + kappa gammadot^n.  Defaults "
+                  "are the Materials 2025 Table 1 pair -- the only pair the "
+                  "gates were run against.  Change one and the run is no longer "
+                  "described by anything in AUDIT_REPORT.md; the runner says so.")
+    for flag, dest, unit, helptext in FLUID_ARGS:
+        fl.add_argument(flag, type=float, default=getattr(_FLUID_DEFAULTS, dest),
+                        help=f"{helptext} [{unit}]")
+    ap.add_argument("--eccentricity", type=float,
+                    default=StandoffConfig().eccentricity_in_gauge_hole,
+                    help="casing eccentricity IN GAUGE HOLE, B02 (16); the "
+                         "physical offset is held constant, so e falls inside a "
+                         "washout.  GEO-02: no K-GEP-1 centralizer record "
+                         "exists, so this is an assumption, not a measurement.")
     return ap
+
+
+_FLUID_DEFAULTS = FluidsConfig()
+
+# (flag, dest, unit, help).  One row per fluid field, so the parser, the UI form
+# and the reproducibility check cannot disagree about what exists.
+FLUID_ARGS = (
+    ("--mud-density", "mud_density", "kg/m^3",
+     "displaced fluid density rho1_hat"),
+    ("--mud-consistency", "mud_consistency", "Pa s^n",
+     "displaced fluid consistency kappa1_hat (= viscosity when n = 1)"),
+    ("--mud-power-law-index", "mud_power_law_index", "-",
+     "displaced fluid n1, in (0, 1]; n > 1 is refused, not extrapolated"),
+    ("--mud-yield-stress", "mud_yield_stress", "Pa",
+     "displaced fluid tauY1_hat"),
+    ("--cement-density", "cement_density", "kg/m^3",
+     "displacing fluid density rho2_hat"),
+    ("--cement-consistency", "cement_consistency", "Pa s^n",
+     "displacing fluid consistency kappa2_hat"),
+    ("--cement-power-law-index", "cement_power_law_index", "-",
+     "displacing fluid n2, in (0, 1]"),
+    ("--cement-yield-stress", "cement_yield_stress", "Pa",
+     "displacing fluid tauY2_hat"),
+)
+
+
+def fluids_from_args(args) -> FluidsConfig:
+    """`FluidsConfig` from the parsed arguments, validated by the dataclass.
+
+    The validation is `FluidsConfig.__post_init__`'s, not a second copy: an
+    incoherent pair raises here exactly as it would if written into config.py.
+    """
+    return FluidsConfig(**{dest: getattr(args, dest)
+                           for _, dest, _, _ in FLUID_ARGS})
+
+
+def config_from_args(args) -> Config:
+    """The whole `Config` a set of arguments describes."""
+    return Config(grid=GridConfig(args.n_phi, args.n_xi),
+                  fluids=fluids_from_args(args),
+                  standoff=StandoffConfig(args.eccentricity))
 
 
 # Units and admissible ranges, which argparse has no field for.  Kept here, next
@@ -149,13 +218,114 @@ PARAM_META = {
     "volumes": {"unit": "volumes",  "lo": 1e-3, "hi": 10.0},
     "n_c":     {"unit": "nodes",    "lo": 2,    "hi": 401},
     "n_h":     {"unit": "nodes",    "lo": 1,    "hi": 65},
+    # e < 1 is the geometric limit (the casing touches the wall at e = 1/2 in
+    # B02's convention once d_hat is accounted for); 0.95 keeps H > 0.
+    "eccentricity": {"unit": "-", "lo": 0.0, "hi": 0.95},
 }
+
+
+def _physics_suffix(cfg) -> str:
+    """`""` for the shipped fluids and standoff, `_f<6 hex>` otherwise."""
+    default = Config(grid=cfg.grid)
+    if (cfg.fluids, cfg.standoff) == (default.fluids, default.standoff):
+        return ""
+    key = repr((cfg.fluids, cfg.standoff)).encode()
+    return "_f" + hashlib.sha1(key).hexdigest()[:6]
+
+
+def write_status_stub(path, phase, note=""):
+    """A status document for the part of a run that happens BEFORE stepping.
+
+    The closure table is built first and can take a quarter of an hour; the
+    step loop -- and therefore `StatusWriter` -- does not exist yet.  Without
+    this, a monitor watching a freshly launched run sees no file at all and
+    cannot distinguish "building the table" from "failed to start", which are
+    very different things to a person deciding whether to wait.
+    """
+    if not path:
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"schema": 1, "state": "preparing", "phase": phase,
+                   "note": note, "pid": os.getpid(),
+                   "command": " ".join(sys.argv),
+                   "updated_at": time.time()}, f)
+    os.replace(tmp, path)
+
+
+class StatusWriter:
+    """Rewrites a small JSON file with live progress, atomically.
+
+    Why a file and not a socket or a queue: a run is already a plain subprocess
+    and must stay one, because the build spec requires a UI run and a CLI run to
+    be the same invocation.  A file is the only channel that costs the solver
+    nothing and works whether the reader is a UI, a tail, or nobody.
+
+    Atomic by temp-file plus `os.replace`, the pattern `Simulation.run` already
+    uses for checkpoints, so a reader can never see half a document.  Throttled,
+    so a 10^5-step run does not spend its time serialising.  Every field here is
+    read off the objects the run already maintains; nothing is computed for the
+    file.
+    """
+
+    def __init__(self, path, sim, geo, capacity, t_end, command, every=1.5):
+        self.path, self.sim, self.geo = path, sim, geo
+        self.capacity, self.t_end = capacity, t_end
+        self.command, self.every = command, every
+        self.t0, self.last = time.time(), 0.0
+        self.static_max = 0
+
+    def _write(self, doc):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(doc, f)
+        os.replace(tmp, self.path)
+
+    def update(self, rep, force=False):
+        self.static_max = max(self.static_max, rep.static_cells)
+        now = time.time()
+        if not force and now - self.last < self.every:
+            return
+        self.last = now
+        Z = self.geo.grid.Z
+        frac = min(1.0, rep.t / self.t_end) if self.t_end > 0 else 0.0
+        self._write({
+            "schema": 1, "state": "running", "pid": os.getpid(),
+            "command": self.command,
+            "started_at": self.t0, "updated_at": now,
+            "elapsed_s": now - self.t0,
+            "fraction": frac,
+            "eta_wall_s": ((now - self.t0) * (1.0 - frac) / frac
+                           if frac > 1e-6 else None),
+            "step": rep.n, "t": rep.t, "t_over_Z": rep.t / Z, "dt": rep.dt,
+            "efficiency": rep.efficiency,
+            "c_min": rep.c_min, "c_max": rep.c_max,
+            "picard_iterations": rep.picard_iterations,
+            "static_cells": rep.static_cells, "static_cells_max": self.static_max,
+            # the invariants the run must be watched by, not just its progress
+            "conservation_error": self.sim.conservation_error,
+            "outlet_import_volumes": self.sim.transport.outlet_import / self.capacity,
+            "picard_unconverged": self.sim.n_picard_unconverged,
+            "worst_picard_residual": self.sim.worst_picard_residual,
+            "closure_table_range_report": self.sim.closures.range_report(),
+        })
+
+    def finish(self, state, message=""):
+        try:
+            doc = json.load(open(self.path)) if os.path.exists(self.path) else {}
+        except (OSError, ValueError):
+            doc = {}
+        doc.update({"state": state, "message": message,
+                    "updated_at": time.time(),
+                    "elapsed_s": time.time() - self.t0})
+        self._write(doc)
 
 
 def main():
     args = build_parser().parse_args()
 
-    cfg = Config(grid=GridConfig(args.n_phi, args.n_xi))
+    write_status_stub(args.status_json, "geometry", "building the wall profile")
+    cfg = config_from_args(args)
     geo = make_geometry(cfg, args.wall)
     if args.no_resume:
         for f in os.listdir("output"):
@@ -189,6 +359,9 @@ def main():
           f"delta/pi={float(np.max(geo.narrow_gap_parameter(g.xi_centres))):.4f}",
           flush=True)
 
+    write_status_stub(args.status_json, "closure table",
+                      f"{args.n_c} x {args.n_h} x 17 gap-scale solves; this is "
+                      f"the long part, and it is cached")
     tab, path, secs = make_table(sc, geo, args.n_c, args.n_h)
     print(f"closure table {tab.shape}, r={tab.tuned_r:g}, "
           f"{tab.n_failed} unconverged, {secs:.0f} s", flush=True)
@@ -199,6 +372,13 @@ def main():
     t_end = args.volumes * g.Z
     static = [0]
     last = [time.time()]
+    capacity = float(np.sum(cell_volume(geo)))
+    status = None
+    if args.status_json:
+        status = StatusWriter(args.status_json, sim, geo, capacity, t_end,
+                              " ".join(sys.argv))
+        write_status_stub(args.status_json, "stepping",
+                          "elliptic solve + transport step per timestep")
     # see scripts/phase1_sweep.py: the ZF23 metrics only mean anything while the
     # whole front is still inside the domain
     snap = {"c": None, "t": None}
@@ -206,6 +386,8 @@ def main():
 
     def on_step(rep, c, psi):
         static[0] = max(static[0], rep.static_cells)
+        if status is not None:
+            status.update(rep)
         # Sample while the tip is still well inside the domain -- at 80% of it.
         # Waiting until the tip reaches the OUTLET clips the w_r+ tail exactly
         # where it is largest, because that tail lives at small c_bar, right at
@@ -219,9 +401,18 @@ def main():
                   f"  static={rep.static_cells}", flush=True)
 
     t0 = time.time()
+    # The filename carried six settings and none of them a fluid property, so
+    # two runs differing only in the mud would write to the SAME path.  Since
+    # R-2 that is refused rather than silently resumed -- correct, but it also
+    # made the second run impossible.  A short hash of the non-mesh physics is
+    # appended when it is not the shipped default, so the default keeps its
+    # historical name (old checkpoints still resolve) and anything else gets its
+    # own file.  The hash is a disambiguator, not the guard: the guard is the
+    # settings tag stored inside the checkpoint.
+    phys = _physics_suffix(cfg)
     ckpt = os.path.join("output", f"kgep1_ckpt_{args.wall}_{args.inflow}_"
                                   f"{args.n_phi}x{args.n_xi}_w{args.w0}_"
-                                  f"v{args.volumes}.npz")
+                                  f"v{args.volumes}{phys}.npz")
     # Provenance and the resume guard.  Before this, the checkpoint filename
     # carried six of ~20 settings, so editing a fluid property and relaunching
     # the same command SILENTLY resumed a field computed under the old physics
@@ -237,11 +428,24 @@ def main():
     print(f"settings fingerprint {tag}", flush=True)
     runio.write_config(ckpt, payload)
 
-    res = sim.run(t_end=t_end, record_every=1, on_step=on_step,
-                  checkpoint_path=ckpt, checkpoint_tag=tag)
+    try:
+        res = sim.run(t_end=t_end, record_every=1, on_step=on_step,
+                      checkpoint_path=ckpt, checkpoint_tag=tag)
+    except BaseException as exc:
+        # A monitor that only ever sees "running" cannot tell a crashed run from
+        # a slow one, and a run killed at 90% is the expensive case.  Record the
+        # reason, then re-raise unchanged -- this handler must not swallow it.
+        if status is not None:
+            status.finish("failed", f"{type(exc).__name__}: {exc}")
+        raise
     wall = time.time() - t0
 
-    print(f"\n{res.reports[-1].n} steps, {wall:.0f} s, "
+    if not res.reports:
+        print("\nnothing to do: the checkpoint is already at or past "
+              f"{args.volumes} volumes (step {res.steps}, "
+              f"t/Z = {res.times[-1] / g.Z:.4f}).  The results below are read "
+              "back from it, not recomputed.", flush=True)
+    print(f"\n{res.steps} steps, {wall:.0f} s, "
           f"conservation {res.conservation_error:.2e}, "
           f"c in [{res.concentration.min():.4f}, {res.concentration.max():.4f}]")
     # A-2.  t_br is a LEVEL SET of a front the first-order scheme smears, so its
@@ -251,11 +455,9 @@ def main():
     # ~18% at the 0.01 threshold on n_xi = 80, ~3% at the 0.5 threshold.  The
     # figures are printed with that attached rather than to four decimals,
     # because halving the 0.01 error costs four times the cells.
-    _TBR_REL_ERR = {0.01: 0.175, 0.1: 0.069, 0.5: 0.033}      # at n_xi = 80
-    scale = (80.0 / g.n_xi) ** 0.5                            # half order
     print("t_br  " + "  ".join(
         f"@{th}={res.breakthrough_at(th) / g.Z:.4f}"
-        f"(+-{_TBR_REL_ERR[th] * scale * 100:.0f}%)" for th in THRESHOLDS))
+        f"(+-{tbr_relative_error(th, g.n_xi) * 100:.0f}%)" for th in THRESHOLDS))
     print("      the bracket is the DISCRETISATION error of a threshold front, "
           "O(dxi^1/2); eta_E below is an integral and is O(dxi)")
     eta = displacement_efficiency(geo, res.concentration)
@@ -266,7 +468,6 @@ def main():
     # that caught NUM-29 -- the inflow face was delivering 110 Q -- and it is
     # cheap, so it is printed on every run rather than done by hand when
     # something already looks wrong.
-    capacity = float(np.sum(cell_volume(geo)))
     pumped = args.volumes * g.Z / capacity          # Q = 1, so volume = t
     tb = res.breakthrough_at(0.01) / g.Z
     note = ("expected negative: displacing fluid has been leaving through the "
@@ -296,6 +497,10 @@ def main():
     rr = sim.closures.range_report()
     print("closure-table range: " + (rr if rr else "all queries inside the table"),
           flush=True)
+    # eta_E is dominated by the wide side, which was never in doubt.  The same
+    # integral over the narrow quarter is the number the job is actually about.
+    print(f"eta_N (narrow quarter) = "
+          f"{narrow_side_efficiency(geo, res.concentration):.4f}")
     print(f"narrow-side minimum c_bar = "
           f"{float(np.min(narrow_side_profile(geo, res.concentration))):.4f}")
     print(f"residual (c_bar < 0.5) volume fraction = "
@@ -329,16 +534,17 @@ def main():
         "schema": 1,
         "settings_fingerprint": tag,
         "checkpoint": os.path.basename(ckpt),
-        "steps": res.reports[-1].n,
+        "steps": res.steps,
         "wall_clock_s": wall,
         "conservation_error": res.conservation_error,
         "c_min": float(res.concentration.min()),
         "c_max": float(res.concentration.max()),
         "eta_E": eta,
         "t_br_over_Z": {str(th): (res.breakthrough_at(th) / g.Z) for th in THRESHOLDS},
-        "t_br_relative_error": {"0.01": 0.175 * (80.0 / g.n_xi) ** 0.5,
-                                "0.1": 0.069 * (80.0 / g.n_xi) ** 0.5,
-                                "0.5": 0.033 * (80.0 / g.n_xi) ** 0.5},
+        "t_br_relative_error": {str(th): tbr_relative_error(th, g.n_xi)
+                                for th in THRESHOLDS},
+        "eta_N": narrow_side_efficiency(geo, res.concentration),
+        "eta_N_fraction": 0.25,
         "narrow_side_min": float(np.min(narrow_side_profile(geo, res.concentration))),
         "residual_fraction": residual_fraction(geo, res.concentration),
         "volume_pumped": args.volumes * g.Z / capacity,
@@ -361,6 +567,8 @@ def main():
     })
     print(f"wrote {runio.config_path_for(ckpt)}")
     print(f"wrote {runio.metrics_path_for(ckpt)}")
+    if status is not None:
+        status.finish("done", os.path.basename(ckpt))
 
 
 if __name__ == "__main__":

@@ -7,6 +7,13 @@ benchmarks are Newtonian without exception, so before this file nothing in the
 repository tested the M3 closure table against an external analytic statement
 (audit finding A-4.3).
 
+It lived in `tests/benchmarks/` until 2026-09-19 and moved into the package
+under UI gap G-5, unchanged.  The reason is that it is the ONLY a-priori
+prediction this codebase can make from the setup inputs alone -- before a run,
+from I1, I2, q0, I3 and b -- so the Case-setup screen needs it, and a screen
+must not import from `tests/`.  Nothing about it is test-specific: it takes
+closure callables and returns a regime.
+
 BF25's construction.  The base flow is the dispersing planar front (3.7) with
 gap-averaged concentration c_bar_0.  The axial pressure gradient through it is
 set by c_bar_0, BF25 (3.10):

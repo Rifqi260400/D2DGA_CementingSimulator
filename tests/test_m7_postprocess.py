@@ -193,3 +193,41 @@ def test_m7_axial_profile_is_volume_weighted():
     H = geo.H(g.phi_centres, g.xi_centres)
     exact = np.sum(H[:50], axis=0) / np.sum(H, axis=0)
     assert np.allclose(axial_profile(geo, c), exact, rtol=1e-12)
+
+
+# ---------------------------------------------------------------- M7-T7 ---
+def test_m7_t7_narrow_side_efficiency_is_the_wide_side_removed():
+    """eta_N must be the SAME integral as eta_E over fewer columns.
+
+    Three properties pin it, so it cannot drift into being a different
+    quantity: over the whole annulus it IS eta_E; on a uniform field it is that
+    constant whatever the fraction (so the volume weights are right); and on a
+    field that is displaced on the wide side only, eta_N must be far below
+    eta_E -- which is the entire reason for having it.
+    """
+    import numpy as np
+    from d2dga.config import Config, GridConfig
+    from d2dga.geometry import build_geometry
+    from d2dga.postprocess import displacement_efficiency, narrow_side_efficiency
+
+    geo = build_geometry(Config(grid=GridConfig(16, 40)))
+    n_phi = geo.grid.n_phi
+
+    c = np.random.default_rng(0).uniform(0.0, 1.0, (n_phi, geo.grid.n_xi))
+    assert narrow_side_efficiency(geo, c, 1.0) == pytest.approx(
+        displacement_efficiency(geo, c), rel=1e-14)
+
+    flat = np.full((n_phi, geo.grid.n_xi), 0.37)
+    for frac in (0.1, 0.25, 0.5, 1.0):
+        assert narrow_side_efficiency(geo, flat, frac) == pytest.approx(0.37)
+
+    # displaced on the wide half only: phi runs wide (0) -> narrow (1)
+    split = np.zeros((n_phi, geo.grid.n_xi))
+    split[: n_phi // 2, :] = 1.0
+    assert narrow_side_efficiency(geo, split, 0.25) == pytest.approx(0.0)
+    assert displacement_efficiency(geo, split) > 0.5   # the wide side is bigger
+
+    with pytest.raises(ValueError, match="fraction must be in"):
+        narrow_side_efficiency(geo, flat, 0.0)
+    # always at least one column, however coarse the mesh
+    assert np.isfinite(narrow_side_efficiency(geo, flat, 1e-6))

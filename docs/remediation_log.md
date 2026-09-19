@@ -705,3 +705,64 @@ unknown-key refusal, the angle-exact Newtonian pair, the m-sweep locking the
 corrected claim, and the named departures. M0-C10's thresholds are one-sided and
 far from the measured values (benign < 5% vs 0.53%; not-benign > 50% vs 93%) so
 the gate tests the claim rather than the solver's tolerance.
+
+---
+
+## UI screens 1, 2 and 4 — what building them found
+
+The interface was built in the build spec's order. Screen 3 (Results) shipped
+first because it could be verified against data that already existed; the other
+three write, launch or judge, and each turned up something the code did not
+show.
+
+### Four defects, none of them visible in the source
+
+**The Validation screen manufactured a clean bill of health.** Its first ZF22
+parser filtered rows with `startswith("| ")` and then sliced `[2:]`.
+`output/zf22_table3.md` writes its separator as `|---|---|`, with no space, so
+the filter removed the separator and the slice removed **case 1** — the one
+case of ten that does not reproduce. The screen displayed **9 / 9**, which is
+exactly the error in the mockup I had corrected G-8 for, arrived at
+independently by discarding the counter-evidence. Parsing moved into
+`ui/reports.py` where it is testable without a browser; the separator is now
+found by its content; UI-12/13/14 lock all three properties.
+
+**A run with non-default fluids was invisible.** The `_f<hash>` suffix that
+stops two fluid pairs writing to one checkpoint was missing from
+`runs.discover`'s pattern, so a run launched from the interface completed,
+wrote its config and metrics, and never appeared in the list. Nothing failed.
+Found by trying to open a run the interface had just produced. UI-15/16.
+
+**"Reproduce from the CLI" did not.** `Run.command()` listed six flags by hand
+and omitted `--mud-*`, so a run on a non-default mud was shown a command that
+reproduces a *different* run, under that heading. It is now built by the
+launcher from the recorded payload, and UI-17 closes the loop by parsing the
+displayed line back and requiring the same `Config`.
+
+**Relaunching a finished run crashed.** `res.reports[-1].n` raises `IndexError`
+when a resume finds the checkpoint already at `t_end`. Pressing Run twice is
+free, so a launcher hits this immediately. `RunResult.steps` (REM-13) fixes it
+and also fixes a quieter error: with `record_every > 1` the last *report* is
+not the last *step*, so every printed step count was short.
+
+### And one I nearly shipped
+
+The Results screen threw `NameError: name 'json' is not defined` on the
+"Recorded configuration" panel — a path that had never executed before,
+because until today no run had a recorded payload. I had screenshotted that
+page and read the first sixty lines of its text, which did not reach the
+error. The fix is not the import; it is that every screen is now swept with
+Playwright in several states and the captured text is searched for
+`Traceback`, `NameError` and the rest. Reading the top of a page is not
+looking at it.
+
+### What was added to the solver, and why none of it is a UI calculation
+
+`--status-json` and the `preparing` stub; `Simulation.conservation_error`;
+`RunResult.steps`; `postprocess.narrow_side_efficiency` and
+`tbr_relative_error`. REM-12..15. The rule the spec sets — "if a display needs
+data the solver does not emit, add an emitting hook, not a calculation in the
+UI layer" — is what forced each of them; the alternative for the volume error
+in particular was a second copy of an invariant that could disagree with the
+run's own report.
+

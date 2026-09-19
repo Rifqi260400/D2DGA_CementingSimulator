@@ -53,7 +53,7 @@ def run_case(case, n_phi, n_xi, cfl):
         case=case,
         b=b,
         Z=Z,
-        steps=res.reports[-1].n,
+        steps=res.steps,
         wall=wall,
         t_br={th: res.breakthrough_at(th) / Z for th in THRESHOLDS},
         eta=res.efficiency_at(1.2 * Z),

@@ -65,6 +65,16 @@ class RunResult:
     reports: list = field(default_factory=list)
     breakthrough_time: float = np.nan
     conservation_error: float = 0.0
+    # Total timesteps taken, including any restored from a checkpoint.
+    #
+    # Callers used to read `reports[-1].n`, which is wrong in two ways that
+    # only show up at the edges.  With `record_every > 1` the last REPORT is
+    # not the last STEP, so the printed count was short by up to
+    # record_every - 1.  And a run relaunched after it had already finished
+    # takes no steps at all, leaving `reports` EMPTY -- so re-running a
+    # completed job raised IndexError instead of saying it was complete.  A
+    # launcher does that routinely.
+    steps: int = 0
 
     def efficiency_at(self, t):
         """Linearly interpolated displacement efficiency at time t."""
@@ -141,6 +151,10 @@ class Simulation:
         self._psi_prev = None
         self.n_picard_unconverged = 0
         self.worst_picard_residual = 0.0
+        # Worst relative volume error so far, live.  See the note where it is
+        # updated: it is emitted so a monitor can watch the invariant during a
+        # run instead of recomputing it or waiting for `run` to return.
+        self.conservation_error = 0.0
 
         # total pore volume of the (half) annulus, for the efficiency metric
         self._capacity = self.transport.mass(np.ones(
@@ -227,6 +241,7 @@ class Simulation:
             [float(np.max(c[:, -1]))], []
         mass_running = self.transport.mass(c)
         cons_err = 0.0
+        self.conservation_error = 0.0
         t_br = np.nan
         psi = None
 
@@ -258,6 +273,7 @@ class Simulation:
             n = int(z["n"])
             mass_running = float(z["mass_running"])
             cons_err = float(z["cons_err"])
+            self.conservation_error = cons_err
             t_br = float(z["t_br"])
             times = list(z["times"])
             effs = list(z["effs"])
@@ -302,6 +318,13 @@ class Simulation:
             m = self.transport.mass(c)
             cons_err = max(cons_err,
                            abs(m - mass_running) / max(abs(mass_running), 1e-30))
+            # Emitted, not just returned.  The worst relative volume error so
+            # far is the invariant a long run has to be WATCHED by, and until
+            # now it existed only as a local until `run` returned -- so a
+            # monitor either waited hours for it or recomputed it, and a second
+            # copy of an invariant is worse than none.  Read-only; nothing in
+            # the solver reads it back.
+            self.conservation_error = cons_err
             out = float(np.max(c[:, -1]))
             if np.isnan(t_br) and out >= breakthrough_threshold:
                 # linear interpolation between the bracketing steps.  Uses the
@@ -354,4 +377,4 @@ class Simulation:
                          outlet_concentration=np.array(outlet),
                          concentration=c, stream_function=psi,
                          reports=reports, breakthrough_time=t_br,
-                         conservation_error=cons_err)
+                         conservation_error=cons_err, steps=n)

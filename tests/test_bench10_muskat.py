@@ -16,7 +16,7 @@ import pytest
 
 from d2dga.gapscale import newtonian as nwt
 from d2dga.scaling import zf22_buoyancy_to_bf25
-from tests.benchmarks.bf25_muskat import (check_I2_at_one, classify,
+from d2dga.muskat import (check_I2_at_one, classify,
                                           dw_at_leading_edge, finger_velocity,
                                           front_speed)
 from tests.benchmarks.zf22_cases import CASES

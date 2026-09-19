@@ -108,6 +108,16 @@ CSS = f"""
           border-radius: 6px; padding: 10px 13px; font-size: 12px;
           color: {MUTED}; line-height: 1.55; }}
   .bad strong {{ color: {RUST_INK}; }}
+  table.zf {{ width: 100%; border-collapse: collapse; margin-top: 6px;
+              font-family: 'IBM Plex Mono', monospace; font-size: 12px; }}
+  table.zf th {{ text-align: right; font-weight: 500; color: {MUTED_2};
+                 font-size: 10px; text-transform: uppercase;
+                 letter-spacing: 0.6px; padding: 3px 6px;
+                 border-bottom: 1px solid {BORDER}; }}
+  table.zf th:first-child, table.zf td:first-child {{ text-align: left; }}
+  table.zf td {{ text-align: right; padding: 3px 6px; color: {INK};
+                 border-bottom: 1px solid {GROUND}; }}
+  table.zf tr.miss td {{ background: {RUST_WASH}; color: {RUST_INK}; }}
   .unavail {{ border: 1px dashed {BORDER}; border-radius: 6px;
               padding: 16px; font-size: 12px; color: {MUTED_2};
               line-height: 1.55; background: transparent; }}

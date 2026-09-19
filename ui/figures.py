@@ -73,22 +73,93 @@ def field_with_envelope(geometry, c, figsize=(5.4, 6.6), stretch=False):
                      + ("   (scale stretched to this run)" if stretch else
                         "   (absolute scale)"), fontsize=8)
 
-        xi_c = geometry.grid.xi_centres
-        dpi = np.asarray(geometry.narrow_gap_parameter(xi_c), dtype=float)
-        depth_c = geometry.well.total_depth_m - geometry.xi_hat(xi_c)
-        colours = np.where(dpi > theme.DELTA_PI_VALIDATED, theme.AMBER, theme.TEAL)
-        height = abs(depth[1] - depth[0]) * 0.92
-        axe.barh(depth_c, dpi, height=height, color=colours, linewidth=0)
-        axe.axvline(theme.DELTA_PI_VALIDATED, color=theme.TEAL_DARK, lw=1.0)
-        axe.text(theme.DELTA_PI_VALIDATED, d_top, " 0.038", fontsize=7,
-                 color=theme.TEAL_DARK, va="top", ha="left")
-        axe.set_xlim(0.0, max(0.05, float(dpi.max()) * 1.18))
-        axe.set_xlabel("$\\delta/\\pi$")
-        frac = float(np.mean(dpi > theme.DELTA_PI_VALIDATED))
-        axe.set_title(f"{frac:.0%} outside", loc="left",
-                      color=theme.AMBER_INK if frac else theme.TEAL_DARK)
-        for s in ("top", "right"):
-            axe.spines[s].set_visible(False)
+        _draw_envelope(axe, geometry, d_top, abs(depth[1] - depth[0]))
+    return fig
+
+
+def _draw_envelope(axe, geometry, d_top, bar_height):
+    """The delta/pi bar chart, on an axis whose y is already depth.
+
+    Extracted so the setup screen and the results screen draw the SAME
+    envelope.  A second copy would be a second chance to disagree about which
+    side of 0.038 a case is on, which is the one judgement this panel exists
+    to make.
+    """
+    xi_c = geometry.grid.xi_centres
+    dpi = np.asarray(geometry.narrow_gap_parameter(xi_c), dtype=float)
+    depth_c = geometry.well.total_depth_m - geometry.xi_hat(xi_c)
+    colours = np.where(dpi > theme.DELTA_PI_VALIDATED, theme.AMBER, theme.TEAL)
+    axe.barh(depth_c, dpi, height=bar_height * 0.92, color=colours, linewidth=0)
+    axe.axvline(theme.DELTA_PI_VALIDATED, color=theme.TEAL_DARK, lw=1.0)
+    axe.text(theme.DELTA_PI_VALIDATED, d_top, " 0.038", fontsize=7,
+             color=theme.TEAL_DARK, va="top", ha="left")
+    axe.set_xlim(0.0, max(0.05, float(dpi.max()) * 1.18))
+    axe.set_xlabel("$\\delta/\\pi$")
+    frac = float(np.mean(dpi > theme.DELTA_PI_VALIDATED))
+    axe.set_title(f"{frac:.0%} outside the validated envelope", loc="left",
+                  color=theme.AMBER_INK if frac else theme.TEAL_DARK)
+    for sp in ("top", "right"):
+        axe.spines[sp].set_visible(False)
+    return dpi
+
+
+def envelope_only(geometry, figsize=(3.4, 5.4)):
+    """The validity envelope on its own, for the setup screen.
+
+    Same depth axis and same drawing code as the results pairing, so a case
+    looks the same before and after it is run.
+    """
+    with plt.rc_context(theme.mpl_rc()):
+        fig, ax = plt.subplots(figsize=figsize)
+        depth = _depth_edges(geometry)
+        d_top, d_bot = float(np.min(depth)), float(np.max(depth))
+        _draw_envelope(ax, geometry, d_top, abs(depth[1] - depth[0]))
+        ax.set_ylim(d_bot, d_top)
+        ax.invert_yaxis()
+        ax.set_ylabel("depth below surface (m)")
+    return fig
+
+
+def muskat(c0, dw, figsize=(5.4, 2.6)):
+    """BF25 (3.13): Delta_w against the base-state concentration.
+
+    The sign is the whole content, so zero is drawn as a rule and the curve is
+    filled on the side it is on.
+    """
+    with plt.rc_context(theme.mpl_rc()):
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.axhline(0.0, color=theme.RULE, lw=1.0)
+        ax.plot(c0, dw, color=theme.TEAL, lw=1.6)
+        ax.fill_between(c0, dw, 0.0, where=(dw > 0), color=theme.AMBER,
+                        alpha=0.28, interpolate=True, label="finger penetrates")
+        ax.fill_between(c0, dw, 0.0, where=(dw <= 0), color=theme.TEAL,
+                        alpha=0.18, interpolate=True, label="finger absorbed")
+        ax.set_xlabel("base-state concentration $\\bar c_0$")
+        ax.set_ylabel("$\\Delta w$")
+        ax.set_title("BF25 (3.13) finger stability", loc="left")
+        ax.legend(frameon=False, fontsize=8, loc="best")
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    return fig
+
+
+def live_history(times, efficiency, Z, fraction, figsize=(6.4, 2.4)):
+    """Efficiency so far, with the pumped-volume target marked.
+
+    Deliberately not the finished-run history plot: there is no breakthrough
+    marker, because during a run `t_br` may not have happened yet and an
+    absent marker must not read as "no breakthrough".
+    """
+    with plt.rc_context(theme.mpl_rc()):
+        fig, ax = plt.subplots(figsize=figsize)
+        t = np.asarray(times) / Z
+        ax.plot(t, efficiency, color=theme.TEAL, lw=1.4)
+        ax.set_xlabel("pumped volumes  $t/Z$")
+        ax.set_ylabel("$\\eta_E$")
+        ax.set_xlim(0.0, max(1e-9, float(t[-1]) / max(fraction, 1e-9)))
+        ax.set_ylim(0.0, 1.02)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
     return fig
 
 
