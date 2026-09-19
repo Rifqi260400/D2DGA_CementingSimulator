@@ -84,7 +84,7 @@ an **upper bound** on the angle error (θ = 0 against θ = 90°), not the error 
 | **Case setup** | Every parameter; b, m, B, Fr*, Δρ̂, Z, Δξ from `Scaling`; the δ/π envelope; BF25 §3.3's Muskat verdict computed from this case's own closures; the `BLOCKED.md` items as blocked; the exact command | Re is greyed as "not used" rather than dropped — its absence is informative. The Muskat verdict is behind a control that states its cost, because it builds a real closure table; nothing is shown if it is not computed |
 | **Run monitor** | Progress, and next to it the **invariants** — volume error, c̄ range, outlet import, Picard at cap, static cells — because those are what decide whether a run is worth finishing | No live concentration field: writing it every two seconds would make the monitor a bottleneck on the run. No Pause: the solver has no paused state |
 | **Results** | η_E, η_N, the narrowest column, t_br at three thresholds with measured error bars, invariants, dimensionless groups, the field beside its δ/π envelope on a shared axis, ZF23 metrics from `metrics.json` | Snapshots, Ψ, and the measured Δw_f — the run keeps only its final field |
-| **Validation** | `output/gates.json` with per-module counts; ZF22 Table 3 **9 / 10**, case 1 at −44.5 % linked to BLK-6; the open items; and a statement of what has no gate at all | It will not fall back to the prose in `docs/gate_status.md` when the gates have not been run — a hand-written file cannot go stale loudly |
+| **Validation** | Opens by saying this stage does **not** validate against CFD. Then **BCF25 §IV's conservation ledger** plotted as their Figs. 7/15 with their 10⁻¹⁵ line on the axes; `output/gates.json` with per-module counts; ZF22 Table 3 **9 / 10**, case 1 at −44.5 % linked to BLK-6; the open items; and what has no gate at all | It will not fall back to the prose in `docs/gate_status.md` when the gates have not been run. It will not show a run's older conservation number in the BCF25 panel: that one is normalised differently and is not comparable |
 
 ## Two defects that only the rendered page revealed
 
@@ -102,6 +102,32 @@ displayed a clean 9 / 9, exactly the mockup's error, arrived at independently
 by discarding its own counter-evidence. Parsing moved into `ui/reports.py`
 where it can be tested without a browser, the separator is found by content,
 and UI-12/13/14 lock it.
+
+## The conservation panel, and what it does not prove
+
+BCF25 §IV computes each fluid's volume two ways — integrated over the
+interior, and accumulated from the boundary fluxes — normalises both by the
+total annulus volume, and differences them. Their Figs. 7 and 15 plot that
+against time and report **~10⁻¹⁵**. The Validation screen runs the same
+computation on this solver and draws the same figure, with their level marked.
+
+Two things the panel says out loud rather than letting the picture imply:
+
+* **The two fluid curves being mirror images is not corroboration.** BCF25
+  evolve K = 3 concentrations independently. Here K = 2 and only `c̄₂` is
+  evolved, so `c̄₁ ≡ 1 − c̄₂` and fluid 1's flux is identically the total minus
+  fluid 2's — the LLF dissipation changes sign with `c` and cancels. The
+  independent content is the third curve, the **total-flux imbalance**, which
+  asks whether the elliptic solve delivered the same Q at both ends. Measured:
+  exactly 0.0.
+* **A longer run sits higher, and that is roundoff.** √N·ε is 6.5 × 10⁻¹⁴ at
+  85 000 steps, so the panel reads the measured value against that rather than
+  against 10⁻¹⁵ flat, and says which it is doing.
+
+Runs recorded before 2026-09-19 have no ledger. They are shown as having none
+— their older conservation number divides by the volume present rather than
+the annulus, and presenting it in this panel would be comparing two different
+quantities against BCF25's one.
 
 ## Honest limits
 

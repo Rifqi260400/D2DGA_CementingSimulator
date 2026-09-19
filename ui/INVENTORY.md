@@ -207,6 +207,21 @@ Two more moved rather than appeared: `bf25_muskat.py` from `tests/` into
 checkpoint filename gained a `_f<hash>` suffix for non-default physics, because
 two such runs otherwise write to one path.
 
+## D-ter. Verification at this stage
+
+**Not CFD.** User direction, 2026-09-19: at this stage the model is verified
+against mass conservation and its percentage error, the way paper 11 (BCF25)
+does it — not compared against a resolved simulation. The Validation screen
+states that in those words before showing anything.
+
+`d2dga/conservation.py` implements BCF25 §IV verbatim, including their
+normalisation by the total annulus volume — which the codebase's existing
+conservation number did *not* use, so it could not be set beside their
+~10⁻¹⁵. Measured **2.04 × 10⁻¹⁵** with the total-flux imbalance **exactly
+0.0**. Seven gates (M8-T1..T7) pin the definition as much as the magnitude,
+including one that injects an unbooked volume and requires it to be reported.
+⚠️ With K = 2 fluid 1's curve is not independent evidence — see REM-16.
+
 ## E. Proposed deviations from the mockup
 
 | Deviation | Reason |

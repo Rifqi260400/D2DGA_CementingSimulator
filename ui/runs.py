@@ -142,6 +142,20 @@ class Run:
         return float(self._load()["cons_err"])
 
     @property
+    def ledger(self) -> dict | None:
+        """BCF25 §IV's per-fluid volume ledger, as a time series.
+
+        `None` for a checkpoint written before it existed -- which the screen
+        must show as absent rather than as a run with no error.
+        """
+        d = self._load()
+        if "ledger_err1" not in d:
+            return None
+        return {"err1": d["ledger_err1"], "err2": d["ledger_err2"],
+                "imbalance": d["ledger_imbalance"],
+                "times": d["times"][: len(d["ledger_err1"])]}
+
+    @property
     def settings_tag(self) -> str | None:
         d = self._load()
         return str(d["tag"]) if "tag" in d and str(d["tag"]) else None

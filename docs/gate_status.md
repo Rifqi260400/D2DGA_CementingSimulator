@@ -16,7 +16,7 @@ carried over from the build.
 > here and its absence is invisible — recorded as a limitation, not a pass.
 
 **Verdict of the run this table is built from:** `python tests/run_gates.py`
--> **317 passed, 0 failed, 0 errors** (exit 0), 2026-09-19. Before the remediation the suite was
+-> **324 passed, 0 failed, 0 errors** (exit 0), 2026-09-19. Before the remediation the suite was
 223 passed / 0 failed; everything since has been added, and none removed or
 skipped. No previously green gate has regressed.
 
@@ -29,6 +29,22 @@ prose cannot tell you the prose is stale.
 Of those, 8 are `tests/test_runio.py`, added with **R-2**: a checkpoint could be
 resumed under different physics, because `Simulation.run` checked only the grid
 shape and the checkpoint filename carries six of ~20 settings.
+
+`tests/test_m8_conservation.py` (M8-T1..T7) gates **BCF25 §IV**, the
+verification this stage of the project rests on: there is no CFD comparison,
+so the model is checked against the ten published ZF22 cases and against the
+volume ledger that paper applies to the same scheme. Measured **2.04 × 10⁻¹⁵**
+against their reported ~10⁻¹⁵, with the total-flux imbalance **exactly 0.0**.
+
+Three of those gates are about the *definition* rather than the magnitude,
+because a conservation figure is easy to make look good: M8-T1 fixes the
+normalisation (by the annulus volume, BCF25's, not by the volume present);
+M8-T3 requires fluid 1's ledger to be built from the closure-free total flux
+rather than read off fluid 2's; and M8-T7 injects an unbooked volume and
+requires the ledger to report it at the size injected — a conservation check
+that cannot fail is decoration. ⚠️ With `K = 2` the two fluid curves are near
+mirror images and that is **not** corroboration; see REM-16 and
+`docs/assumptions.md`.
 
 `tests/test_ui_contract.py` (UI-1..17) gates the seam between the runner and
 the interface, which is where a display can quietly stop describing the thing

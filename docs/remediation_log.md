@@ -766,3 +766,121 @@ UI layer" — is what forced each of them; the alternative for the volume error
 in particular was a second copy of an invariant that could disagree with the
 run's own report.
 
+---
+
+## The verification this stage rests on — BCF25 §IV — **REM-16**
+
+**User direction, 2026-09-19:** at this stage validation is not a comparison
+against CFD; it is verification against mass conservation and its percentage
+error, as paper 11 (BCF25) does it.
+
+That is a sharper instruction than it looks, because BCF25 specify the
+computation exactly, and this codebase was not doing it.
+
+### What BCF25 do
+
+> "for each fluid, we compute the total volume in the annulus in two ways.
+> First, we compute Vol₁(k), by integrating cⁿ_{k,i+1/2,j+1/2} numerically over
+> the interior volume of the annulus, i.e. we multiply by H rₐ Δφ Δξ and sum
+> over the interior cells. Second, we compute Vol₂(k) at each timestep,
+> starting with the initial volumes in the annulus and adding/subtracting the
+> inflow/outflow of each fluid at the start and finish of the annulus, at each
+> timestep. We normalize these quantities with the total annulus volume and
+> subtracted to give a relative volumetric error."
+
+Their Figs. 7 and 15 plot that against time, one curve per fluid, across five
+cases and both the 2DGA and D2DGA models, and report it stays at **~10⁻¹⁵**.
+
+### What this codebase was doing, and why it was not comparable
+
+`Simulation.run` computed `max |Vol₁ − Vol₂| / |Vol₂|`. Two differences:
+
+1. **The normalisation.** Dividing by the volume *present* rather than by the
+   annulus volume. `Vol₂ → 0` at the start of a run, so that denominator
+   inflates the error exactly where the absolute error is smallest. It is a
+   *stricter* measure, not a wrong one — but it is not BCF25's, and a number
+   computed one way cannot be set beside a number computed the other.
+2. **One scalar, not a series.** A running maximum cannot be plotted as their
+   Fig. 7, and cannot show whether the error grows, drifts or spikes.
+
+Both are now produced. The old number is kept and labelled, because it is the
+stricter statement and every earlier result in this repository quotes it.
+
+### What the two-fluid version proves, and what it does not
+
+This is the part worth being careful about, because the figure invites a wrong
+reading.
+
+BCF25 evolve **K = 3** concentrations independently, so their three curves are
+three separate ledgers and "the concentrations sum to 1" is a genuine result of
+their scheme. Here **K = 2** and only `c̄₂` is evolved: `c̄₁ ≡ 1 − c̄₂`
+pointwise. The two-fluid closure then makes fluid 1's face flux *identically*
+the total volumetric face flux minus fluid 2's — `q_{1,0} = 1 − q₀`,
+`𝓘_{1,3} = −𝓘₃`, and the LLF dissipation term `−½a(c_N − c_S)` changes sign
+with `c` and cancels exactly. So
+
+    err₁ + err₂ = −(total volume in − total volume out) / V
+
+identically, and fluid 1's curve is **not independent evidence**. The only part
+that is independent is the total-flux imbalance, which asks whether the
+elliptic solve delivered the same `Q` at both ends. It is reported as its own
+curve rather than being folded into a second fluid curve that would look like
+corroboration. The identity is asserted as a gate (M8-T4) to a residual of
+~9 ε, which is cancellation in forming `V − Vol₁`, not slack.
+
+The total volumetric flux is taken from the stream function alone —
+`0.5 (Ψ[-1,j] − Ψ[0,j])`, because the advective flux with `q₀ = 1` telescopes —
+so it is closure-free and measures what the elliptic solve produced, not what
+the transport scheme did with it. Checked against the face flux with the
+annulus full of fluid 2, where the two must coincide: they agree to **0.0**
+(M8-T3).
+
+### Measured
+
+| | |
+|---|---|
+| Run | steps `N` | worst \|err\| | √N·ε | ratio |
+|---|---|---|---|---|
+| 8 × 40 Newtonian test pair | 150 | 2.04 × 10⁻¹⁵ | 2.7 × 10⁻¹⁵ | **0.75** |
+| 8 × 24 **K-GEP-1 fluids**, 0.35 volumes | 15 359 | 7.82 × 10⁻¹⁴ | 2.7 × 10⁻¹⁴ | **2.84** |
+| 16 × 80 production (older measure) | 85 474 | 2.93 × 10⁻¹⁴ | 6.5 × 10⁻¹⁴ | **0.45** |
+
+Total-flux imbalance: **exactly 0.0** in every case. BCF25 report ~10⁻¹⁵.
+
+**The raw exponent is not the comparison, and quoting only the 2 × 10⁻¹⁵ from
+the small case would be picking the flattering one.** Error accumulates with
+the step count, so the scale-free reading is the ratio to √N·ε. On that
+reading the K-GEP-1 pair sits at 2.8 — the highest of the three, and the
+excess over a pure random walk is where FLU-06 shows up: with `b·𝓘₁ ≈ 1500`
+each step's boundary flux is orders larger than the net volume change it
+produces, so there is more cancellation per step than a random-walk estimate
+assumes. It is still roundoff, not bookkeeping; a bookkeeping error would be
+orders away, not a factor of three. The Validation screen prints the ratio
+rather than the exponent for exactly this reason, and its pass band is
+20 × √N·ε rather than a flat 10⁻¹⁴, which would mark a correct long run as
+failing.
+
+Read a longer run against roundoff, not against 10⁻¹⁵ flat: √N·ε is
+6.5 × 10⁻¹⁴ at N = 85 474 steps, which is why the gate is set at 10⁻¹⁴ with a
+second assertion tying it to √N·ε rather than to a bare constant.
+
+The K-GEP-1 production run recorded **2.93 × 10⁻¹⁴** over 85 474 steps — but
+under the *older* normalisation, because it predates this ledger. That is
+**0.45 √N·ε**, i.e. below the random-walk roundoff scale for its length; and
+since the older measure is an upper bound on the BCF25-normalised one (it
+divides by a volume that is never larger than the annulus), the BCF25 number
+for that run is at or below 2.93 × 10⁻¹⁴ too. It is arithmetic, not
+bookkeeping. The run has **not** been repeated to record the ledger properly —
+it is ~3.3 h — so the Validation screen shows that run as having no ledger
+rather than presenting the old number as if it were BCF25's.
+
+### Where it appears
+
+Printed by `scripts/kgep1_run.py`, stored as a series in the checkpoint (and
+restored across a resume — M8-T5, because a ledger that restarts at a
+checkpoint would show a clean run that was not clean), summarised in
+`metrics.json`, shown live on the run monitor, and plotted on the Validation
+screen as BCF25's Figs. 7 and 15 with their 10⁻¹⁵ line drawn on the axes. That
+screen now opens by saying, in those words, that this stage does not validate
+against CFD and that verification and validation are different questions.
+

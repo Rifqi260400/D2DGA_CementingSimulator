@@ -25,9 +25,12 @@ import subprocess
 import sys
 import time
 
+import numpy as np
 import streamlit as st
 
-from ui.common import ROOT, banner, page_chrome, panel, rows, unavailable
+from ui import figures, runs
+from ui.common import (ROOT, banner, page_chrome, panel, rows,
+                       unavailable)
 from ui.reports import read_blocked, read_gates, zf22_comparison
 
 page_chrome("Validation")
@@ -40,6 +43,113 @@ ZF22 = os.path.join(ROOT, "output", "zf22_table3.md")
 # --------------------------------------------------------------------------
 # the gates
 # --------------------------------------------------------------------------
+banner("warn",
+       "<strong>This stage does not validate against CFD.</strong> There is no "
+       "resolved three-dimensional simulation to compare with, and none is "
+       "claimed. What is on this page is <em>verification</em>: the scheme is "
+       "checked against the ten published ZF22 cases, and against the volume "
+       "ledger of <strong>BCF25 §IV</strong> — the same test that paper applies "
+       "to the same scheme, on the same equations, reporting ~10<sup>−15</sup>. "
+       "Verification asks whether the equations are solved correctly. "
+       "Validation against a measurement or a resolved simulation is a "
+       "different question, and this page does not answer it.")
+
+st.markdown("### Conservation — BCF25 §IV")
+
+st.markdown(
+    '<span class="note">BCF25 compute each fluid\'s volume two ways: '
+    '<strong>Vol₁</strong> by integrating c&#772;<sub>k</sub> over the interior '
+    '(multiplying by H·r<sub>a</sub>·Δφ·Δξ and summing), and <strong>Vol₂</strong> '
+    'by starting from the initial volume and adding the inflow and subtracting '
+    'the outflow at each timestep. Both are normalised by the total annulus '
+    'volume and differenced. Their Figs. 7 and 15 plot that against time, one '
+    'curve per fluid, and report it stays at ~10<sup>−15</sup> across five '
+    'cases and both models. This is the same computation on this '
+    'solver.</span>', unsafe_allow_html=True)
+
+_led_runs = [r for r in runs.discover("output") if r.ledger is not None]
+if not _led_runs:
+    unavailable("Conservation ledger",
+                "No run on disk carries one. It is written into the checkpoint "
+                "from 2026-09-19; earlier runs recorded only the single "
+                "running maximum, under a different normalisation "
+                "(by the volume present, not by the annulus), so their number "
+                "is <em>not</em> comparable with BCF25's and is not shown here "
+                "as though it were. Re-run to record it.")
+else:
+    pick = st.selectbox("Run", _led_runs, key="val_ledger",
+                        format_func=lambda r: r.name.replace("_", " · "))
+    led = pick.ledger
+    geo_v = runs.build_geometry(pick)
+    e1 = np.abs(np.asarray(led["err1"], dtype=float))
+    e2 = np.abs(np.asarray(led["err2"], dtype=float))
+    im = np.abs(np.asarray(led["imbalance"], dtype=float))
+    worst = float(max(e1.max(), e2.max()))
+
+    c1, c2 = st.columns([1.0, 1.9], gap="medium")
+    with c1:
+        panel("Worst relative error",
+              f'<div class="big">{worst:.2e}</div>'
+              + rows((("fluid 1 (displaced)", f"{e1.max():.2e}"),
+                      ("fluid 2 (displacing)", f"{e2.max():.2e}"),
+                      ("total flux in − out", f"{im.max():.2e}"),
+                      ("steps", f"{len(e2) - 1:,}"),
+                      ("BCF25 report", "~1e-15"))),
+              "normalised by the total annulus volume — BCF25's "
+              "normalisation, so the numbers are comparable")
+        # The criterion is the ROUNDOFF SCALE, not a flat constant.  BCF25's
+        # 1e-15 is a number for their runs; error accumulates with the step
+        # count, so a 15,000-step run cannot be held to the same figure and
+        # a comparison against 1e-15 flat would mark a correct long run as
+        # failing.  sqrt(N)*eps is the random-walk estimate; the ratio to it
+        # is printed, because that ratio -- not the raw exponent -- is what
+        # says whether this is arithmetic or bookkeeping.
+        n_steps = len(e2) - 1
+        roundoff = max(n_steps, 1) ** 0.5 * float(np.finfo(float).eps)
+        ratio = worst / roundoff if roundoff else float("inf")
+        panel("Against the roundoff scale",
+              rows((("steps N", f"{n_steps:,}"),
+                    ("√N·ε", f"{roundoff:.2e}"),
+                    ("worst / √N·ε", f"{ratio:.2f}"))),
+              "ε = 2.22e-16. A random walk of N roundoff errors grows as "
+              "√N·ε, so this ratio is the scale-free reading; the raw "
+              "exponent is not comparable between runs of different length.")
+        if ratio <= 20.0:
+            banner("good",
+                   f"<strong>Arithmetic, not bookkeeping.</strong> "
+                   f"{worst:.1e} over {n_steps:,} steps is "
+                   f"<strong>{ratio:.1f}×</strong> the random-walk roundoff "
+                   f"scale. BCF25 report ~1e-15 for their cases; this run is "
+                   f"longer, so the comparable statement is the ratio, not "
+                   f"the exponent.")
+        else:
+            banner("bad",
+                   f"<strong>{worst:.1e} is {ratio:.0f}× the roundoff "
+                   f"scale</strong> for {n_steps:,} steps ({roundoff:.1e}). "
+                   f"That is too far past arithmetic to be arithmetic: look "
+                   f"at the flux bookkeeping.")
+        if im.max() == 0.0:
+            banner("good", "<strong>The total volumetric flux balances "
+                           "exactly.</strong> In and out agree to the bit, so "
+                           "the elliptic solve delivers the same Q at both "
+                           "ends.")
+    with c2:
+        st.pyplot(figures.conservation(led["times"], led["err1"], led["err2"],
+                                       led["imbalance"], geo_v.grid.Z),
+                  use_container_width=True)
+        banner("warn",
+               "<strong>The two fluid curves are near mirror images, and that "
+               "is not corroboration.</strong> BCF25 evolve K = 3 "
+               "concentrations independently, so their three curves are three "
+               "separate ledgers and summing to 1 is a real result. Here K = 2 "
+               "and only c&#772;<sub>2</sub> is evolved: c&#772;<sub>1</sub> ≡ "
+               "1 − c&#772;<sub>2</sub> pointwise, and the two-fluid closure "
+               "makes fluid 1's face flux identically the total minus fluid "
+               "2's — the LLF dissipation term changes sign with c and cancels "
+               "exactly. So fluid 1's ledger differs from −fluid 2's only by "
+               "the <em>total-flux imbalance</em>, which is the third curve and "
+               "the independent content of this check.")
+
 st.markdown("### Test gates")
 
 gates = read_gates()

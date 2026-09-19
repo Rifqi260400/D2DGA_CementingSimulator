@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .conservation import ConservationLedger
 from .elliptic import ClosureProvider, StreamFunctionSolver
 from .geometry import Geometry
 from .transport import TransportSolver
@@ -242,6 +243,14 @@ class Simulation:
         mass_running = self.transport.mass(c)
         cons_err = 0.0
         self.conservation_error = 0.0
+        # BCF25 Section IV.  Two independent volume ledgers per fluid,
+        # normalised by the TOTAL annulus volume -- their normalisation, which
+        # is not the one `cons_err` uses.  Both are kept: `cons_err` is the
+        # stricter early-time measure this codebase has always reported, and
+        # the ledger is the number that can be put beside BCF25's ~1e-15.
+        self.ledger = ConservationLedger(capacity=self._capacity,
+                                         vol1_2_initial=mass_running)
+        self.ledger.start(0.0, mass_running)
         t_br = np.nan
         psi = None
 
@@ -280,6 +289,22 @@ class Simulation:
             outlet = list(z["outlet"])
             self.n_picard_unconverged = int(z["n_picard_unconverged"])
             self.worst_picard_residual = float(z["worst_picard_residual"])
+            # A checkpoint written before the ledger existed has no series to
+            # restore.  Rather than silently starting a fresh one -- which
+            # would report a conservation error measured over part of the run
+            # while looking like the whole of it -- the ledger is marked
+            # partial and says so.
+            if "ledger_err1" in z.files:
+                self.ledger.err1 = list(z["ledger_err1"])
+                self.ledger.err2 = list(z["ledger_err2"])
+                self.ledger.imbalance = list(z["ledger_imbalance"])
+                self.ledger.times = list(times)
+                st = z["ledger_state"]
+                (self.ledger._vol2_1, self.ledger._vol2_2,
+                 self.ledger._net_total) = (float(st[0]), float(st[1]),
+                                            float(st[2]))
+            else:
+                self.ledger.resumed_without_history = True
             print(f"resumed from {checkpoint_path}: step {n}, t/Z = "
                   f"{t / self.geom.grid.Z:.4f}", flush=True)
 
@@ -301,7 +326,16 @@ class Simulation:
                 effs=np.array(effs), outlet=np.array(outlet),
                 tag=("" if checkpoint_tag is None else str(checkpoint_tag)),
                 n_picard_unconverged=self.n_picard_unconverged,
-                worst_picard_residual=self.worst_picard_residual)
+                worst_picard_residual=self.worst_picard_residual,
+                # BCF25 IV, as a series so it can be plotted as their Figs. 7
+                # and 15 rather than collapsed to one number.  Three float64
+                # arrays: ~2 MB on a 10^5-step run, inside a compressed npz.
+                ledger_err1=np.array(self.ledger.err1),
+                ledger_err2=np.array(self.ledger.err2),
+                ledger_imbalance=np.array(self.ledger.imbalance),
+                ledger_state=np.array([self.ledger._vol2_1,
+                                       self.ledger._vol2_2,
+                                       self.ledger._net_total]))
 
         last_save = _time.time()
 
@@ -310,12 +344,14 @@ class Simulation:
             c_new, psi, dt, Q, bflux, iters = self.step(
                 c, t, max_dt=t_end - t)
             mass_running += bflux
+            total_flux = self.transport.last_total_flux
             prev_t, prev_out = t, float(np.max(c[:, -1]))
             c = c_new
             t += dt
             n += 1
 
             m = self.transport.mass(c)
+            self.ledger.record(t, m, bflux, total_flux)
             cons_err = max(cons_err,
                            abs(m - mass_running) / max(abs(mass_running), 1e-30))
             # Emitted, not just returned.  The worst relative volume error so

@@ -155,7 +155,10 @@ def _live_body(h):
               "extrapolation of the steps so far, not a model of the run")
     with mid:
         panel("Invariants",
-              rows((("volume conservation", num("conservation_error", "{:.2e}")),
+              rows((("BCF25 §IV worst |err|", num("bcf25_worst", "{:.2e}")),
+                    ("total flux in − out",
+                     num("bcf25_total_flux_imbalance", "{:.2e}")),
+                    ("volume conservation", num("conservation_error", "{:.2e}")),
                     ("c&#772; range",
                      num("c_min", "{:.4f}") + " – " + num("c_max", "{:.4f}")),
                     ("outlet import",
@@ -163,8 +166,10 @@ def _live_body(h):
                     ("Picard at cap", num("picard_unconverged", "{:,.0f}")),
                     ("worst Picard residual",
                      num("worst_picard_residual", "{:.2e}")))),
-              "the worst value so far, not the current step — these are the "
-              "numbers that decide whether the run is worth finishing")
+              "the worst value so far, not the current step. The first two "
+              "are BCF25 §IV's ledger, normalised by the annulus volume so "
+              "they can be read against that paper's ~1e-15; the third is "
+              "the older measure, normalised by the volume present.")
     with right:
         panel("Regularisation and closures",
               rows((("static cells now", num("static_cells", "{:,.0f}")),

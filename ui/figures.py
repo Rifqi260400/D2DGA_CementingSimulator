@@ -202,3 +202,46 @@ def profiles(geometry, c, figsize=(6.4, 2.5)):
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
     return fig
+
+
+def conservation(times, err1, err2, imbalance, Z, figsize=(6.4, 3.0)):
+    """BCF25 Figs. 7 and 15: the relative volumetric error against time.
+
+    Log scale, because the whole claim is about an ORDER of magnitude, and a
+    linear axis would show a flat line at zero whatever the answer.  BCF25's
+    reported level is drawn as a reference line so the comparison is on the
+    figure rather than in the caption.
+
+    The two fluid curves are near mirror images here and that is expected, not
+    corroboration: with K = 2 only c_2 is evolved and fluid 1's flux is
+    identically the total minus fluid 2's.  The independent content is the
+    total-flux imbalance, which is why it is the third curve.
+    """
+    with plt.rc_context(theme.mpl_rc()):
+        fig, ax = plt.subplots(figsize=figsize)
+        t = np.asarray(times, dtype=float) / Z
+        floor = 1e-18       # so exact zeros are drawable on a log axis
+        for series, colour, label in (
+                (err1, theme.MUD_INK, "fluid 1 (displaced)"),
+                (err2, theme.TEAL, "fluid 2 (displacing)"),
+                (imbalance, theme.AMBER, "total flux in − out")):
+            y = np.abs(np.asarray(series, dtype=float))
+            ax.plot(t, np.maximum(y, floor), lw=1.1, color=colour, label=label)
+        ax.axhline(1e-15, color=theme.MUTED_2, lw=0.9, ls="--")
+        ax.text(0.0, 1.3e-15, " BCF25 ~1e-15", fontsize=7,
+                color=theme.MUTED_2, ha="left", va="bottom")
+        # A curve that is exactly zero is clamped to the floor and would sit
+        # invisibly on the bottom spine, so say so rather than letting the
+        # legend promise a line the reader cannot find.
+        if float(np.max(np.abs(np.asarray(imbalance, dtype=float)))) == 0.0:
+            ax.text(0.0, floor * 1.5, " total flux in − out is exactly 0",
+                    fontsize=7, color=theme.AMBER_INK, ha="left", va="bottom")
+        ax.set_yscale("log")
+        ax.set_ylim(1e-18, 1e-10)
+        ax.set_xlabel("pumped volumes  $t/Z$")
+        ax.set_ylabel("|relative volumetric error|")
+        ax.set_title("BCF25 §IV conservation ledger", loc="left")
+        ax.legend(frameon=False, fontsize=7, loc="upper left", ncols=3)
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+    return fig

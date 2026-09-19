@@ -43,6 +43,7 @@ RUST_WASH = "#FCF3F1"
 RUST_EDGE = "#E8C4BC"
 
 # -- concentration ---------------------------------------------------------
+MUD_INK = "#9A7B3C"      # readable on a line plot, unlike MUD
 MUD = "#D9C9A3"          # c_bar = 0, displaced fluid
 CEMENT = TEAL            # c_bar = 1, displacing fluid
 CMAP = LinearSegmentedColormap.from_list("d2dga_c", [MUD, "#7EA694", CEMENT])

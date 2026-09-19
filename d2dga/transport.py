@@ -178,6 +178,7 @@ from __future__ import annotations
 import numpy as np
 
 from .elliptic import ClosureProvider
+from .conservation import total_axial_flux
 from .geometry import Geometry
 
 
@@ -267,6 +268,10 @@ class TransportSolver:
         # changed.  But an artefact nobody measures becomes permanent, so the
         # volume is accumulated here and the run scripts print it.
         self.outlet_import = 0.0
+        # Net TOTAL volume that crossed the boundaries in the last step, for
+        # BCF25 IV's fluid-1 ledger.  See conservation.py for why fluid 1
+        # cannot simply be read off fluid 2 here.
+        self.last_total_flux = 0.0
 
     # ------------------------------------------------------------------
     # state at cell centres
@@ -493,6 +498,13 @@ class TransportSolver:
         outflux = dt * float(np.sum(Xi[:, -1]))
         if outflux < 0.0:                       # A-1: fluid 2 entering at xi = Z
             self.outlet_import -= outflux
+        # BCF25 IV needs the TOTAL volumetric flux as well as fluid 2's, so
+        # that fluid 1's ledger can be built from the boundaries rather than
+        # from `capacity - fluid 2`, which would make it corroborate itself.
+        # Closure-free and exact: the advective flux with q0 = 1 telescopes the
+        # stream function.  See d2dga/conservation.py.
+        self.last_total_flux = dt * (total_axial_flux(psi, 0)
+                                     - total_axial_flux(psi, -1))
         return c_new, dt, influx - outflux
 
     # ------------------------------------------------------------------

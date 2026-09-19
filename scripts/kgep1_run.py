@@ -308,6 +308,10 @@ class StatusWriter:
             "picard_unconverged": self.sim.n_picard_unconverged,
             "worst_picard_residual": self.sim.worst_picard_residual,
             "closure_table_range_report": self.sim.closures.range_report(),
+            # BCF25 IV, live.  The invariant this stage's verification rests
+            # on should not first be visible when the run ends.
+            "bcf25_worst": self.sim.ledger.worst,
+            "bcf25_total_flux_imbalance": self.sim.ledger.total_flux_imbalance,
         })
 
     def finish(self, state, message=""):
@@ -477,6 +481,16 @@ def main():
     print(f"volume balance: pumped {pumped:.4f}, present {eta:.4f}, "
           f"difference {eta - pumped:+.5f} "
           f"({100 * (eta - pumped) / args.volumes:+.2f}% of the job) -- {note}")
+    # BCF25 Section IV, the verification this stage of the project rests on:
+    # there is no CFD comparison, so the model is checked against the published
+    # ZF22 cases and against this ledger -- the same test BCF25 apply to the
+    # same scheme.  Reported with THEIR normalisation (by the annulus volume)
+    # so the number can be put beside their ~1e-15, and next to the older
+    # `cons_err`, which divides by the running volume instead and is therefore
+    # a stricter early-time measure of the same thing.
+    print(sim.ledger.report(), flush=True)
+    print(f"  (the run's own cons_err, normalised by the volume present "
+          f"rather than by the annulus, is {res.conservation_error:.2e})")
     # A-3.  The closure table's range guard used to be a UserWarning and nothing
     # more, and these runs were launched under `-W ignore::UserWarning`, so the
     # evidence that the closures were being EXTRAPOLATED was destroyed.  The
@@ -537,6 +551,12 @@ def main():
         "steps": res.steps,
         "wall_clock_s": wall,
         "conservation_error": res.conservation_error,
+        "conservation_bcf25": {
+            k: v for k, v in sim.ledger.as_dict().items()
+            # the full series goes in the checkpoint, not in this file: a
+            # 10^5-step run would make metrics.json tens of megabytes and
+            # nothing reads it from here
+            if k not in ("times", "err1", "err2", "imbalance")},
         "c_min": float(res.concentration.min()),
         "c_max": float(res.concentration.max()),
         "eta_E": eta,
