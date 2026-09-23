@@ -12,3 +12,9 @@ ui/__pycache__/
 .streamlit/
 output/gates.json
 output/ui_runs/
+# Archived checkpoints and closure tables.  The existing patterns above carry a
+# slash, so they are anchored at output/ and do not reach a subdirectory --
+# which is how a 1.7 MB checkpoint ended up untracked-but-not-ignored.  The
+# README in that directory IS tracked: it says what was archived and why, and
+# that is the part worth keeping in the history.
+output/archive/*.npz
