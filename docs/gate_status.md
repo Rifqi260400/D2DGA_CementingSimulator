@@ -16,7 +16,7 @@ carried over from the build.
 > here and its absence is invisible — recorded as a limitation, not a pass.
 
 **Verdict of the run this table is built from:** `python tests/run_gates.py`
--> **324 passed, 0 failed, 0 errors** (exit 0), 2026-09-19. Before the remediation the suite was
+-> **332 passed, 0 failed, 0 errors** (exit 0), 2026-09-23. Before the remediation the suite was
 223 passed / 0 failed; everything since has been added, and none removed or
 skipped. No previously green gate has regressed.
 
@@ -29,6 +29,22 @@ prose cannot tell you the prose is stale.
 Of those, 8 are `tests/test_runio.py`, added with **R-2**: a checkpoint could be
 resumed under different physics, because `Simulation.run` checked only the grid
 shape and the checkpoint filename carries six of ~20 settings.
+
+`tests/test_m9_picard_axis.py` (M9-T1..T4) gates **A-3b**, which is the one
+finding in this project that a passing suite actively hid. A-3 — my own
+remediation — anchored the closure table's velocity axis at zero with a single
+node and recorded that it "changes nothing". It put the elliptic Picard
+iteration at its cap on **37.5 % of steps**: 6 iterations became 100, residual
+1.5e-09 became 3.4e-05. Every gate passed throughout the five days it was
+live. It surfaced only when the production case was re-run.
+
+⚠️ **Read that module's docstring before trusting these four gates.** They do
+not reproduce the failure. Two cheap tests that would have were tried and both
+failed to discriminate — a reduced table gives 52 iterations on both axes, a
+synthetic flat front gives 100 on both. What M9 locks is the axis and its
+presence in the run fingerprint (which was absent, so R-2's guard could not see
+an axis change). The failure itself is caught at **run** level, where the cap
+fraction is now printed with a verdict and recorded in `metrics.json`.
 
 `tests/test_m8_conservation.py` (M8-T1..T7) gates **BCF25 §IV**, the
 verification this stage of the project rests on: there is no CFD comparison,

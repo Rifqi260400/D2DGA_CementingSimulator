@@ -60,6 +60,20 @@ def make_geometry(cfg, wall_kind):
     return build_geometry(cfg, wall=wall)
 
 
+def closure_umag_axis():
+    """The velocity axis of the closure table.
+
+    A function rather than a literal inside `make_table` because it is a
+    PHYSICS INPUT that was invisible to the run fingerprint: it lives neither
+    in `Config` nor in the CLI arguments, so changing it left the settings tag
+    unchanged and a checkpoint computed with the old axis would have resumed
+    silently under a new one -- precisely the hazard R-2 exists to stop.  It is
+    now recorded in the config payload (see `main`) and therefore covered.
+    """
+    return np.concatenate([[0.0, 0.005, 0.01, 0.02],
+                           np.geomspace(0.1, 3000.0, 15)])
+
+
 def make_table(sc, geo, n_c, n_h, cache_dir="output"):
     g = geo.grid
     H = geo.H(g.phi_centres, g.xi_centres)
@@ -68,15 +82,33 @@ def make_table(sc, geo, n_c, n_h, cache_dir="output"):
     # fluid pair (FLU-06) any azimuthal tilt of the front drives |u| into the
     # hundreds, so a linear axis to 4 -- ample for the published cases -- is off
     # the end within the first timesteps.  Geometric, to 3000.
-    # A-3.  The axis used to start at 0.02, but |u_bar| reaches 1e-3 at
-    # stagnation points, so 315 of 25.9M closure queries in the production run
-    # fell BELOW the axis and were served by linear extrapolation.  |u_bar| >= 0
-    # always, so anchoring the axis at 0 makes an under-range query impossible.
-    # It costs one extra plane (6% of the build) and changes nothing: the gap
-    # solve at umag = 0, 1e-3 and 0.02 agrees to six significant figures on this
-    # fluid pair, which is why the extrapolation was harmless here and why the
-    # DETECTION (tables.range_report) mattered more than the extrapolation.
-    umag_grid = np.concatenate([[0.0, 0.02], np.geomspace(0.1, 3000.0, 15)])
+    # A-3.  The axis used to start at 0.02, but |u_bar| reaches ~6e-3 at
+    # stagnation points, so closure queries in the production run fell BELOW the
+    # axis and were served by linear extrapolation.  |u_bar| >= 0 always, so
+    # anchoring the axis at 0 makes an under-range query impossible.
+    #
+    # A-3b, 2026-09-23.  Anchoring it with a SINGLE node -- [0, 0.02] -- was a
+    # defect, and the note that used to stand here ("changes nothing") was
+    # wrong.  The gap solve at umag = 0 and 0.02 agrees to six significant
+    # figures, so that segment is almost flat, while the next one, [0.02, 0.1],
+    # is not.  The kink between them breaks the elliptic PICARD iteration,
+    # which updates |u_bar| from the previous Psi and re-evaluates the mobility:
+    # it oscillates across the kink instead of contracting.  Measured on the
+    # K-GEP-1 pair at 16 x 80, same field, same everything but this axis:
+    #
+    #   [0.02] + geom              16 nodes   picard   6   residual 1.54e-09
+    #   [0, 0.02] + geom           17 nodes   picard 100   residual 3.37e-05
+    #   [0, .005, .01, .02] + geom 19 nodes   picard   6   residual 1.54e-09
+    #
+    # The third also leaves NO query outside the table, so it fixes A-3 without
+    # the cost.  The first converges but extrapolates 36 queries per solve.
+    #
+    # This was invisible for five days because no test ran the Picard iteration
+    # on a production-like field and the production case was not re-run; the
+    # previous 16 x 80 run reported "0 steps hit the iteration cap, worst
+    # residual 0.00e+00", the run on the [0, 0.02] axis hit it on 37.5% of
+    # steps.  Gate M9-T1 now locks it.
+    umag_grid = closure_umag_axis()
     # the key covers EVERY axis: `load` verifies them and raises on a mismatch,
     # but a key that ignored one would turn that loud signal into a routine
     # failure the first time an axis was tuned
@@ -422,7 +454,12 @@ def main():
     # the same command SILENTLY resumed a field computed under the old physics
     # -- `run` checked only the grid shape.  The payload is written beside the
     # checkpoint and its fingerprint is stored inside it.
-    payload = runio.config_payload(cfg, vars(args))
+    # A-3b.  The closure table's velocity axis is a physics input that lives in
+    # neither Config nor the arguments.  Recording it here puts it inside the
+    # fingerprint, so a checkpoint cannot be resumed across a change to it.
+    _args = dict(vars(args))
+    _args["closure_umag_axis"] = [float(x) for x in closure_umag_axis()]
+    payload = runio.config_payload(cfg, _args)
     level, message = runio.check_resume(ckpt, payload)
     if level == "block":
         raise SystemExit("REFUSING TO RESUME\n  " + message)
@@ -527,9 +564,24 @@ def main():
     else:
         print("ZF23: no pre-breakthrough state captured")
     print(f"NUM-13 mobility floor: max static cells over the run = {static[0]}")
-    print(f"Picard: {sim.n_picard_unconverged} steps hit the iteration cap, "
-          f"worst residual {sim.worst_picard_residual:.2e} "
-          f"(tolerance {sim.picard_tol:.0e})")
+    # A-3b.  This line existed and nothing read it.  A closure-table axis
+    # change put 37.5% of steps at the cap for five days without anyone
+    # noticing, because the only evidence was a count at the end of a log.
+    # It is now stated as a fraction, with a verdict, and recorded in
+    # metrics.json where the Validation screen reads it.
+    _cap_frac = sim.n_picard_unconverged / max(res.steps, 1)
+    print(f"Picard: {sim.n_picard_unconverged} of {res.steps} steps hit the "
+          f"iteration cap ({_cap_frac:.1%}), worst residual "
+          f"{sim.worst_picard_residual:.2e} (tolerance {sim.picard_tol:.0e})")
+    if _cap_frac > 0.05:
+        print("   ^^ WARNING: the elliptic solve is NOT converging on a large "
+              "fraction of steps.  Psi is perturbed by O(residual) each time. "
+              "This result needs looking at, not quoting.  A-3b was exactly "
+              "this, caused by the closure table's velocity axis.")
+    elif sim.n_picard_unconverged:
+        print("   ^^ non-zero but small; the next step largely corrects an "
+              "under-converged solve, and the pre-A-3 production run reported "
+              "0 over 85474 steps, so a rise here is worth tracing.")
     if static[0]:
         print("   ^ non-zero: the regularisation is load-bearing here, and "
               "PF04 section 5 warns it flatters mud removal.")
@@ -572,6 +624,7 @@ def main():
         "zf23": zf,
         "static_cells_max": static[0],
         "picard_unconverged": sim.n_picard_unconverged,
+        "picard_unconverged_fraction": sim.n_picard_unconverged / max(res.steps, 1),
         "worst_picard_residual": sim.worst_picard_residual,
         "outlet_import_volumes": sim.transport.outlet_import / capacity,
         "closure_table_range_report": sim.closures.range_report(),

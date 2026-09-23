@@ -884,3 +884,85 @@ screen as BCF25's Figs. 7 and 15 with their 10⁻¹⁵ line drawn on the axes. T
 screen now opens by saying, in those words, that this stage does not validate
 against CFD and that verification and validation are different questions.
 
+---
+
+## A-3b — my own A-3 fix broke the elliptic solve — **REM-17**
+
+**Found by re-running the production case**, which is the only reason it was
+found at all. Every gate passed throughout.
+
+### What A-3 did, and what it actually changed
+
+A-3 (remediation, 2026-09-18) anchored the closure table's velocity axis at
+zero, because `|ū|` reaches ~6 × 10⁻³ at stagnation points and queries below
+the old axis minimum of 0.02 were being served by linear extrapolation. It
+anchored with **one** node — `[0, 0.02]` — and the comment written at the time
+said it "changes nothing: the gap solve at umag = 0, 1e-3 and 0.02 agrees to
+six significant figures".
+
+That agreement is exactly the problem. Because those values agree, the
+`[0, 0.02]` segment of the interpolant is nearly **flat**, while the next
+segment `[0.02, 0.1]` is not. The kink between them breaks the elliptic
+**Picard** iteration, which updates `|ū|` from the previous `Ψ` and
+re-evaluates the mobility: it oscillates across the kink instead of
+contracting.
+
+### Measured, same field, only the axis changed
+
+16 × 80, K-GEP-1 fluids, the concentration field at step 1906 of the re-run:
+
+| axis | nodes | Picard | residual | under-range queries |
+|---|---|---|---|---|
+| `[0.02] + geom` (pre-A-3) | 16 | **6** | 1.54e-09 | **36 per solve** |
+| `[0, 0.02] + geom` (A-3) | 17 | **100, at the cap** | 3.37e-05 | none |
+| `[0, .005, .01, .02] + geom` | 19 | **6** | 1.54e-09 | **none** |
+
+The third fixes both problems. Along a fresh 2982-step trajectory the fraction
+of steps hitting the cap is **37.5 % → 1.5 %**; on the live production run,
+**37.5 % → 2.8 %**, and the wall-clock estimate fell from **8.9 h to 2.7 h**,
+because the solver had been spending 100 iterations per step.
+
+**It is not 0 %.** The pre-A-3 production run reported "0 steps hit the
+iteration cap, worst residual 0.00e+00" over 85 474 steps. The refined axis
+leaves 1.5–2.8 %. I am not claiming the axis is now optimal — only that it is
+13–25× better and removes the under-range queries A-3 existed to remove.
+
+### The second defect: R-2's guard could not see this
+
+The axis is hard-coded in `kgep1_run`; it is in neither `Config` nor the CLI
+arguments, so the **settings fingerprint did not cover it**. A checkpoint
+computed with the broken axis would have resumed silently under the fixed one —
+the precise failure R-2 was built to prevent, reached by a route R-2 did not
+cover. *The guard only ever sees what it is handed.* The runner now hands it
+the axis (`closure_umag_axis` in `_PHYSICAL_ARG_KEYS`), and the step-1906
+checkpoint is archived rather than resumed, because it is now refused by tag
+rather than by anyone remembering to refuse it.
+
+### Why there is no direct gate, said plainly
+
+Two attempts at a cheap unit test that reproduces the Picard failure both
+**failed to discriminate**, and they are recorded in `tests/test_m9_picard_axis.py`
+rather than quietly dropped:
+
+* a reduced table (11 c-nodes, 3 H-nodes) gives 52 iterations on **both** axes —
+  too coarse everywhere for this kink to dominate;
+* a synthetic flat front at 16 × 80 gives 100 on **both** axes — harsher than
+  the real flow, so it cannot tell them apart.
+
+Reproducing it needs a production-resolution table (~10 min to build) and a
+field from a real trajectory. That is not a unit test. M9-T1..T4 therefore gate
+the axis itself, as a regression lock on the measured boundary, and its presence
+in the fingerprint, which is a genuine functional property that was genuinely
+absent. The failure is caught at **run** level instead: the cap count existed
+already and nothing read it, so it is now stated as a fraction with a verdict,
+recorded in `metrics.json`, and shown on the monitor and the Results screen.
+
+A gate that cannot fail would have been worse than admitting the gap.
+
+### What this says about the audit
+
+A-3 was my own remediation, written with a claim ("changes nothing") that I did
+not test. It passed every gate for five days. The thing that caught it was
+running the case the numbers are quoted from — which is what the user asked for,
+and which the audit had recorded as outstanding without acting on it.
+

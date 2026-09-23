@@ -239,7 +239,10 @@ with col_num:
           + kv("Narrow-side minimum",
                f"{float(np.min(narrow_side_profile(geo, c))):.4f}")
           + kv("Residual c&#772; &lt; 0.5", f"{residual_fraction(geo, c):.4f}")
-          + kv("Picard at cap", f"{run.picard_unconverged}"))
+          + kv("Picard at cap",
+               f"{run.picard_unconverged}"
+               + (f" ({(run.metrics or {}).get('picard_unconverged_fraction', 0):.1%})"
+                  if (run.metrics or {}).get("picard_unconverged_fraction") else "")))
 
     panel("Dimensionless groups",
           "".join(kv(lab, val) for lab, val in (

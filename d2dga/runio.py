@@ -55,6 +55,15 @@ from dataclasses import asdict
 # where it writes, how often it checkpoints, how loud it is -- may differ freely.
 _PHYSICAL_ARG_KEYS = (
     "wall", "w0", "n_phi", "n_xi", "cfl", "volumes", "inflow", "n_c", "n_h",
+    # A-3b, 2026-09-23.  The closure table's velocity axis belongs here and was
+    # missing.  It is hard-coded in `kgep1_run.closure_umag_axis`, so it is in
+    # neither `Config` nor the CLI arguments -- and changing it changed the
+    # ANSWER while leaving the fingerprint identical, so a checkpoint computed
+    # with one axis would have resumed silently under another.  That is the
+    # exact failure R-2 was built to prevent, reached by a route R-2 did not
+    # cover: the guard only ever saw what it was handed.  The runner now hands
+    # it the axis.
+    "closure_umag_axis",
 )
 
 

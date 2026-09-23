@@ -19,3 +19,16 @@ Both are kept here rather than deleted, because they are what the published
 figures were computed from. The re-run that replaces them writes to the same
 checkpoint name — deliberately, since the documents refer to it — and carries a
 recorded config, a metrics file, a conservation ledger and a measured B-1.
+
+## Also here: `step1906_broken_axis.npz`
+
+The first re-run attempt, stopped at step 1906. Its closure table used the
+`[0, 0.02]` velocity axis, which hits the elliptic Picard cap on 37.5% of
+steps (A-3b). Kept only as the field the diagnosis was run on; it is not a
+result and must not be resumed.
+
+Note the reason it could not simply be resumed once the axis was fixed: the
+axis was in neither `Config` nor the CLI arguments, so the settings
+fingerprint did not cover it and R-2's guard could not see the change. The
+axis is now recorded in the payload, so a checkpoint from the broken axis is
+refused by tag rather than by anyone remembering.
