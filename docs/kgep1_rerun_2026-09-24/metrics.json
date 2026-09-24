@@ -1,0 +1,58 @@
+{
+ "schema": 1,
+ "settings_fingerprint": "b8b36eaa472db1c1",
+ "checkpoint": "kgep1_ckpt_synthetic_no_axial_gradient_16x80_w0.2_v1.2.npz",
+ "steps": 85442,
+ "wall_clock_s": 229.87282729148865,
+ "conservation_error": 1.8708215309035148e-14,
+ "conservation_bcf25": {
+  "worst": 2.2131063477902653e-14,
+  "total_flux_imbalance": 0.0,
+  "capacity": 583.8900530523326,
+  "partial": false
+ },
+ "c_min": 0.9494432568161197,
+ "c_max": 1.0002241025289695,
+ "eta_E": 0.9946052464115223,
+ "t_br_over_Z": {
+  "0.01": 0.9534137340769528,
+  "0.1": 0.9855989855395297,
+  "0.5": 0.9877391767956637
+ },
+ "t_br_relative_error": {
+  "0.01": 0.175,
+  "0.1": 0.069,
+  "0.5": 0.033
+ },
+ "eta_N": 0.9938625085866732,
+ "eta_N_fraction": 0.25,
+ "narrow_side_min": 0.9494432568161197,
+ "residual_fraction": 0.0,
+ "volume_pumped": 1.1593470567631987,
+ "annulus_capacity": 583.8900530523326,
+ "zf23": null,
+ "static_cells_max": 21,
+ "picard_unconverged": 2615,
+ "picard_unconverged_fraction": 0.030605556986025607,
+ "worst_picard_residual": 0.000744751421541801,
+ "outlet_import_volumes": 0.0,
+ "closure_table_range_report": "closure table queried OUTSIDE its range (107705920 point-queries total):\n  axis 'c': 1243947 points out, worst request 1.00068 against [0, 1] (excursion 0.0006795); LINEAR EXTRAPOLATION was used",
+ "closure_table_assumption_report": "angle sensitivity (B-1): worst 9.8% [SIGNIFICANT, worst at |u_bar| = 3000 -- valid only where |u_bar| stays well below that; check the run's actual range]\n  |u|=0: 0.0%  |u|=3.97166: 0.2%  |u|=3000: 9.8%",
+ "scaling": {
+  "m": 0.006377740439357049,
+  "B": 11.942574831999265,
+  "b": 27.902051677967638,
+  "Fr_star": 0.08517111734317762,
+  "delta_rho": -0.20240480961923848,
+  "w0_hat": 0.2,
+  "Z": 564.1093453996082
+ },
+ "geometry": {
+  "delta_over_pi_min": 0.03805741386783697,
+  "delta_over_pi_max": 0.0825242081493186,
+  "e_min": 0.20816523070591467,
+  "e_max": 0.5365155520682106,
+  "H_min": 0.26337483630882297,
+  "H_max": 1.7581869755804298
+ }
+}

@@ -966,3 +966,140 @@ not test. It passed every gate for five days. The thing that caught it was
 running the case the numbers are quoted from — which is what the user asked for,
 and which the audit had recorded as outstanding without acting on it.
 
+
+---
+
+## K-GEP-1 re-run (2026-09-24)
+
+The 16 × 80 production case was re-run end to end on the post-A-3b closure-table
+axis, because A-3b changed the elliptic solver's convergence and the η_E = 0.9946
+in every document had been measured on the pre-A-3b axis. 85,442 steps to
+t/Z = 1.1992, 230 s of solver time spread over ~34 container suspensions.
+
+### The answer did not move
+
+| quantity | archived (pre-A-3b) | this run | Δ |
+|---|---|---|---|
+| η_E at 1.2 volumes | 0.9946 | 0.99460525 | < 1e-5 |
+| η_N (narrow quarter) | 0.9939 | 0.99386251 | < 1e-5 |
+| narrow-side min c̄ | 0.9494447603 | 0.9494432568 | 1.5e-6 |
+| t_br @ 0.01 / 0.1 / 0.5 | 0.953 / 0.986 / 0.988 | 0.9534 / 0.9856 / 0.9877 | within the quoted bars |
+
+The t_br bars are the **discretisation** error of a threshold front, O(dξ^½):
+±17.5% / ±6.9% / ±3.3% at n_ξ = 80 (`postprocess.TBR_RELATIVE_ERROR_AT_80`).
+η_E is an integral and is O(dξ).
+
+So A-3b changed **cost and convergence, not the answer**. That conclusion is
+weaker than it looks, and the reason is the next item: this solver is not
+bit-reproducible, so a shift at the 1e-6 level cannot be attributed to A-3b or
+to anything else. What can be said is that any A-3b effect on η_E is smaller
+than 1e-5, which is four orders below the O(dξ) discretisation error at this
+resolution.
+
+### NEW OPEN ITEM — the solver is not bit-reproducible (NUM-15)
+
+Recomputing the *same* steps from the *same* checkpoint produced a **different**
+unconverged-solve count (1537 → 1521 while the step number moved forward). Both
+counters are checkpointed and roll back together, so this is not a bookkeeping
+slip: the same input gives a different trajectory. numpy here is
+scipy-openblas 0.3.31 with `DYNAMIC_ARCH` and `MAX_THREADS=64`, and neither
+`OMP_NUM_THREADS` nor `OPENBLAS_NUM_THREADS` is set, which is the standard cause.
+
+Consequences, stated plainly:
+* the archived η_E = 0.9946 was never exactly reproducible, and neither is this one;
+* the settings fingerprint (`b8b36eaa472db1c1`) identifies the *inputs*, not the output;
+* any future comparison of two runs at better than ~1e-5 is meaningless until
+  the thread count is pinned.
+
+Threads were **not** pinned during this run: changing the environment mid-run
+would have made the run internally inconsistent. Pinning them is the remedy and
+is untried.
+
+### NEW OPEN ITEM — the final field violates c̄ ≤ 1 (NUM-16)
+
+The archived pre-A-3b final state had c ∈ [0.9494447603, 0.9999999999999998]
+with **zero** cells above 1. This run's final state is
+c ∈ [0.9494432568, 1.0002241025] with **51 of 1280 cells (4.0%) above 1**,
+worst excess 2.24e-4.
+
+The excursion is not monotone and was measured throughout
+(`docs/kgep1_rerun_2026-09-24/cmax_trace.tsv`, 49 samples, plus a dense
+20 s-interval window in `cmax_poll_dense.tsv`): it first appeared around step
+45,300, peaked at 8.575e-4 near step 47,330, decayed across four orders of
+magnitude to 2.8e-7 by step 49,570, sat at O(1e-6) for 30,000 steps, and rose
+again to 2.2e-4 only in the last ~400 steps, when the front had cleared and dt
+grew from 5e-3 to 2.6e-1 (a factor of ~50). The closure table's own record for
+the final stint reports 1,243,947 of 1.08e8 point-queries outside [0,1].
+
+Mechanism: `ClosureTable.derivative_bounds` (`d2dga/gapscale/tables.py:403`)
+supplies the LLF wavespeed bounds through the same linearly-extrapolating
+interpolant as the closures themselves. The bound property holds because the
+interpolant is piecewise linear *between nodes*; outside [0,1] there is no
+bracketing node, so "upper bound on |dq₀/dc|" is no longer guaranteed to bound,
+and the LLF scheme's monotonicity guarantee lapses. The measured decay over
+30,000 steps shows the residual dissipation still dominates in practice, but the
+guarantee is gone, and the final state is the evidence.
+
+No clip was added and the table was not widened: both are solver numerics and
+were out of scope for this run. The integrals barely move (η_E to < 1e-5), so
+this is an admissibility defect in the shipped field, not a visible error in the
+reported efficiency — but it should not be carried into a paper without a fix.
+
+### NEW OPEN ITEM — Picard residual five orders above its tolerance (NUM-17)
+
+2,615 of 85,442 steps (3.1%) hit the 100-iteration cap. `picard_tol` is **1e-08**
+(`d2dga/simulation.py:133`); the worst achieved residual was **7.45e-04**, five
+orders of magnitude short of what was asked for. The pre-A-3 run reported 0 of
+85,474.
+
+Whether that is harmful is a separate question, and the code's own reasoning
+supplies the test: `simulation.py:146-148` justifies not chasing a tight residual
+because the transport step is first order in dt, so the elliptic error is
+harmless only while it stays well below the time-discretisation error. Measured
+ratio resid/dt over 33 samples (`docs/kgep1_rerun_2026-09-24/resid_trace.tsv`): 0.07–0.14
+through the front's passage, falling to 0.003 once dt grew. It never approached
+0.5. So the loose solve is defensible on the code's own criterion — but the
+tolerance in the source is not the tolerance being met, and the source does not
+say so.
+
+### Unchanged from the audit
+
+* **B-1 = 9.8% SIGNIFICANT** at |ū| = 3000 (0.2% at the run's typical |ū| ≈ 4,
+  0.0% at |ū| = 0). Measured on the production axis; earlier runs loaded a cached
+  table and never measured it.
+* **BCF25 §IV conservation**: worst |err| = 2.21e-14 over 85,442 steps, normalised
+  by the annulus volume as BCF25 do; **total-flux imbalance exactly 0.0**.
+  √N·ε = 6.49e-14 for N = 85,442, so the worst error is **0.34 √N·ε** — at the
+  floor for a sum of this length. (The run's own `cons_err`, normalised by volume
+  present rather than by the annulus, is 1.87e-14; the two are not comparable, so
+  the archived 2.93e-14 is not a like-for-like predecessor.) With K = 2 the two
+  fluid curves are not independent corroboration — c̄₁ ≡ 1 − c̄₂ pointwise — so the
+  independent content is the flux imbalance.
+* **Outlet import (A-1) = 0.00000 volumes.**
+* **Static cells (NUM-13 mobility floor) = 21 max**, non-zero, so the
+  regularisation is load-bearing; PF04 §5 warns it flatters mud removal.
+* **ZF23 dispersion criterion: not evaluated** — "no pre-breakthrough state
+  captured". The run reaches t_br @ 0.01 at t/Z = 0.953, and no snapshot before
+  that was retained, so the criterion has still never been checked on this case.
+* Volume balance: pumped 1.1593, present 0.9946, difference −13.73% of the job,
+  expected negative because displacing fluid has been leaving the outlet since
+  t/Z = 0.953.
+
+### Process note
+
+The run was resumed ~34 times because the container suspends whenever the
+session idles, losing 300–2,000 steps each time to the last checkpoint. The
+**final state is unaffected** — the checkpoint *is* the state — but cumulative
+counters were recomputed over repeated steps, so counter *deltas* between two
+readings are not clean and only cumulative ratios were reported during the run.
+
+### Where the evidence is
+
+`output/` is gitignored, so the measured series this section cites are copied
+into `docs/kgep1_rerun_2026-09-24/`:
+
+* `cmax_trace.tsv` — (step, c_max, c_max−1) sampled every ~25 min across the run;
+* `cmax_poll_dense.tsv` — 13 samples at 20 s intervals over steps 47,076–48,191,
+  the window that establishes the overshoot peaked and decayed rather than ran away;
+* `resid_trace.tsv` — (step, worst_picard_residual, dt, ratio);
+* `metrics.json` — the run's own final metrics block, verbatim.

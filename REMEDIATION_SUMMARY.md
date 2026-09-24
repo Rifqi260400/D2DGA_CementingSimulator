@@ -151,7 +151,7 @@ Every "after" state below was produced by an **actual run in this session**.
 | **BENCH-10** | did not exist | **new** — first external analytic check on the Herschel–Bulkley path |
 | ZF22 Table 3 | 9/10 | **9/10, re-run in full this session**, reproducing `output/zf22_table3.md` exactly |
 | PF04 analytic | pass | pass, re-run this session |
-| K-GEP-1 production | `η_E = 0.9946` at 16 × 80 | **not re-run** — see §7 |
+| K-GEP-1 production | `η_E = 0.9946` at 16 × 80 | **re-run in full 2026-09-24** — 85,442 steps to t/Z = 1.199, reproducing `η_E = 0.9946`, `η_N = 0.9939` and narrow-side min `0.9494` on the post-A-3b closure axis; see `docs/remediation_log.md` §"K-GEP-1 re-run (2026-09-24)" |
 
 **No previously green gate regressed.** The only failure during the work was a
 test I had just written (B-1) whose bound was calibrated on the wrong fluid
